@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#080c09" />
+<title>Group B — Rally Legends</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230a0e0a'/%3E%3Cpath d='M10 40h44v8H10z' fill='%23f2c43a'/%3E%3Cpath d='M14 33h10v7H14zM28 24h10v16H28zM42 31h8v9h-8z' fill='%23e9e4d3'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <div id="vignette"></div>
+
+  <!-- ============================ MAIN MENU ============================ -->
+  <section id="menu" class="menu">
+    <div class="menu-shade"></div>
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="eyebrow"><span class="live-dot"></span> FIA WORLD RALLY · 1982—1986</div>
+        <div class="brand-line"><span class="brand-group">GROUP</span><span class="brand-b">B</span></div>
+        <div class="brand-foot"><span>RALLY LEGENDS</span><i></i><span>THE KILLER B'S</span></div>
+      </div>
+      <div class="topbar-actions">
+        <button class="ghost-btn" id="btn-help">CONTROLS</button>
+        <button class="ghost-btn" id="btn-settings">SETTINGS</button>
+        <button class="icon-btn" id="btn-sound" aria-label="Toggle sound" title="Toggle sound">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path class="sound-wave" d="M16 8.5c1.4 1.4 1.4 5.6 0 7M18.5 6c2.6 2.8 2.6 9.2 0 12"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-fullscreen" aria-label="Fullscreen" title="Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="menu-main">
+      <aside class="panel machines">
+        <div class="panel-title"><span class="num">01</span><span>MACHINE</span><span class="line"></span><span class="panel-count" id="car-count">06</span></div>
+        <div class="car-list" id="car-list"></div>
+        <div class="car-spec" id="car-spec"></div>
+        <div class="car-foot" id="car-foot"></div>
+      </aside>
+
+      <div class="stage-scene">
+        <div class="scene-watermark" id="scene-watermark">1985</div>
+        <div class="scene-center">
+          <div class="scene-index" id="scene-index">WRC // 01</div>
+          <div class="scene-rule"></div>
+          <div class="scene-blurb" id="scene-blurb"></div>
+        </div>
+        <div class="scene-bottom">
+          <div class="scene-chip" id="scene-chip-1"><span>LAYOUT</span><b>AWD</b></div>
+          <div class="scene-chip" id="scene-chip-2"><span>POWER</span><b>476 HP</b></div>
+          <div class="scene-chip" id="scene-chip-3"><span>WEIGHT</span><b>1090 KG</b></div>
+          <div class="scene-chip" id="scene-chip-4"><span>TYRE</span><b>GRAVEL</b></div>
+        </div>
+      </div>
+
+      <aside class="panel stages">
+        <div class="panel-title"><span class="num">02</span><span>STAGE</span><span class="line"></span></div>
+        <div class="stage-list" id="stage-list"></div>
+        <div class="stage-detail" id="stage-detail"></div>
+        <div class="stage-intel" id="stage-intel"></div>
+        <button class="start-btn" id="btn-start">
+          <span class="start-stripes"></span>
+          <span class="start-main"><span class="start-label">START STAGE</span><span class="start-meta">SS01 · KIELDER · FOREST</span></span>
+          <span class="start-arrow">→</span>
+          <span class="start-best">BEST <b id="best-display">--:--.--</b></span>
+        </button>
+      </aside>
+    </div>
+
+    <footer class="menu-foot">
+      <div class="foot-keys">
+        <span><kbd>W</kbd><kbd>S</kbd> THROTTLE / BRAKE</span>
+        <span><kbd>A</kbd><kbd>D</kbd> STEER</span>
+        <span><kbd>SPACE</kbd> HANDBRAKE</span>
+        <span><kbd>RMB</kbd> LOOK</span>
+        <span><kbd>R</kbd> RECOVER</span>
+        <span><kbd>ESC</kbd> PAUSE</span>
+      </div>
+      <div class="foot-mark">NO HUD · EYES ON THE ROAD <i></i> BUILT WITH THREE.JS</div>
+    </footer>
+  </section>
+
+  <!-- ============================ LOADING ============================ -->
+  <section id="loading" class="overlay loading hidden">
+    <div class="loading-shell">
+      <div class="loading-top">
+        <div class="loading-kicker" id="loading-kicker">SS01 // KIELDER</div>
+        <div class="loading-flag"><i></i><i></i><i></i></div>
+      </div>
+      <div class="loading-title">PREPARING<br>THE STAGE</div>
+      <div class="loading-bar"><i id="loading-fill"></i></div>
+      <div class="loading-row"><span id="loading-label">SURVEYING ROUTE</span><span id="loading-pct">0%</span></div>
+      <div class="loading-tip" id="loading-tip">Tip: The co-driver calls the road before you can see it. Trust the notes.</div>
+      <div class="loading-car" id="loading-car">AUDI QUATTRO S1 E2 · AWD</div>
+    </div>
+  </section>
+
+  <!-- ============================ COUNTDOWN ============================ -->
+  <section id="countdown" class="countdown hidden">
+    <div class="countdown-top"><span id="countdown-ss">SS01</span><span class="countdown-slash">/</span><span id="countdown-name">KIELDER</span></div>
+    <div class="countdown-num" id="countdown-num">3</div>
+    <div class="countdown-sub" id="countdown-sub">HOLD THE REVS</div>
+  </section>
+
+  <!-- ============================ PAUSE ============================ -->
+  <section id="pause" class="overlay overlay-center hidden">
+    <div class="modal-card pause-card">
+      <div class="modal-kicker">STAGE PAUSED</div>
+      <h2>HOLD YOUR LINE</h2>
+      <div class="pause-stats" id="pause-stats"></div>
+      <div class="pause-buttons">
+        <button class="btn primary wide" id="btn-resume">RESUME</button>
+        <button class="btn" id="btn-restart">RESTART STAGE</button>
+        <button class="btn" id="btn-pause-settings">SETTINGS</button>
+        <button class="btn danger" id="btn-quit">QUIT TO GARAGE</button>
+      </div>
+      <div class="modal-footnote">ESC TO RESUME · R TO RECOVER THE CAR WHILE DRIVING</div>
+    </div>
+  </section>
+
+  <!-- ============================ RESULTS ============================ -->
+  <section id="results" class="overlay overlay-center hidden">
+    <div class="modal-card results-card">
+      <div class="result-top">
+        <div>
+          <div class="modal-kicker">STAGE COMPLETE</div>
+          <h2 id="result-title">KIELDER</h2>
+          <div class="result-sub" id="result-sub">SS01 · FOREST · 2.42 KM</div>
+        </div>
+        <div class="rank-badge" id="result-rank">A</div>
+      </div>
+      <div class="result-times">
+        <div class="result-time-block"><label>STAGE TIME</label><b id="result-time">00:00.00</b></div>
+        <div class="result-time-block"><label>PERSONAL BEST</label><b id="result-best">--:--.--</b></div>
+        <div class="result-time-block"><label>DELTA</label><b id="result-delta">--</b></div>
+      </div>
+      <div class="record hidden" id="result-record">NEW STAGE RECORD</div>
+      <div class="result-note" id="result-note">Clean. Fast. On the notes.</div>
+      <div class="result-buttons">
+        <button class="btn primary" id="btn-next-stage">NEXT STAGE →</button>
+        <button class="btn" id="btn-retry">RETRY</button>
+        <button class="btn" id="btn-results-menu">GARAGE</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ SETTINGS ============================ -->
+  <section id="settings-modal" class="overlay overlay-center hidden">
+    <div class="modal-card settings-card">
+      <button class="modal-close" id="btn-settings-close" aria-label="Close">×</button>
+      <div class="modal-kicker">RALLY COMPUTER</div>
+      <h2>SETTINGS</h2>
+      <div class="settings-grid">
+        <div class="setting-row">
+          <div class="setting-label"><span>GRAPHICS QUALITY</span><small>Trees, shadows & detail</small></div>
+          <select id="set-quality"><option value="high">HIGH</option><option value="medium">MEDIUM</option><option value="low">LOW</option></select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>MASTER VOLUME</span><small id="volume-label">75%</small></div>
+          <input type="range" id="set-volume" min="0" max="100" step="1" value="75">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>CO-DRIVER VOICE</span><small>Spoken pacenotes</small></div>
+          <label class="switch"><input type="checkbox" id="set-voice" checked><i></i></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>WEATHER FX</span><small>Snowfall & rain</small></div>
+          <label class="switch"><input type="checkbox" id="set-weather" checked><i></i></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>CAMERA SHAKE</span><small>Rough-road rumble</small></div>
+          <label class="switch"><input type="checkbox" id="set-shake" checked><i></i></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>LOOK SENSITIVITY</span><small id="sens-label">1.0×</small></div>
+          <input type="range" id="set-sensitivity" min="40" max="200" step="5" value="100">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>SPEED UNITS</span><small>Dashboard readout</small></div>
+          <select id="set-units"><option value="kph">KM/H</option><option value="mph">MPH</option></select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>STAGE RECORDS</span><small>Stored on this machine</small></div>
+          <button class="btn tiny" id="btn-clear-records">CLEAR RECORDS</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <span class="modal-note">Graphics quality applies on the next stage start.</span>
+        <button class="btn primary" id="btn-settings-done">DONE</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ CONTROLS ============================ -->
+  <section id="help-modal" class="overlay overlay-center hidden">
+    <div class="modal-card help-card">
+      <button class="modal-close" id="btn-help-close" aria-label="Close">×</button>
+      <div class="modal-kicker">DRIVER BRIEFING</div>
+      <h2>CONTROLS</h2>
+      <div class="help-grid">
+        <div class="help-block">
+          <h3>KEYBOARD</h3>
+          <div><kbd>W</kbd> / <kbd>↑</kbd><span>THROTTLE</span></div>
+          <div><kbd>S</kbd> / <kbd>↓</kbd><span>BRAKE / REVERSE</span></div>
+          <div><kbd>A</kbd> <kbd>D</kbd><span>STEER</span></div>
+          <div><kbd>SPACE</kbd><span>HANDBRAKE</span></div>
+          <div><kbd>Q</kbd> <kbd>E</kbd><span>LOOK LEFT / RIGHT</span></div>
+          <div><kbd>R</kbd><span>RECOVER TO ROAD</span></div>
+          <div><kbd>ESC</kbd><span>PAUSE</span></div>
+          <div><kbd>H</kbd><span>THIS BRIEFING</span></div>
+          <div><kbd>M</kbd><span>MUTE</span></div>
+        </div>
+        <div class="help-block">
+          <h3>GAMEPAD</h3>
+          <div><kbd>RT</kbd><span>THROTTLE</span></div>
+          <div><kbd>LT</kbd><span>BRAKE / REVERSE</span></div>
+          <div><kbd>LS</kbd><span>STEER</span></div>
+          <div><kbd>A</kbd><span>HANDBRAKE</span></div>
+          <div><kbd>RS</kbd><span>LOOK AROUND</span></div>
+          <div><kbd>Y</kbd><span>RECOVER</span></div>
+          <div><kbd>START</kbd><span>PAUSE</span></div>
+        </div>
+      </div>
+      <div class="help-tip">
+        <span class="help-icon">!</span>
+        <p><b>Hold the right mouse button to look around.</b> Your co-driver sits to your right, calling the road from the trip computer. The map, timer and gauges are all mounted in the car — no floating HUD. Read the pacenotes before the corner, and listen to the surface.</p>
+      </div>
+      <div class="modal-actions"><button class="btn primary" id="btn-help-done">GOT IT</button></div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+  <div id="game-hint" class="game-hint hidden">
+    <span>HOLD <b>RMB</b> OR <b>Q</b>/<b>E</b> TO LOOK</span><i></i><span><b>R</b> TO RECOVER</span><i></i><span><b>ESC</b> PAUSE</span>
+  </div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

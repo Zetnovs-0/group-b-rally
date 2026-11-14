@@ -1,0 +1,11 @@
+{
+  "name": "group-b-rally-legends",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A procedural Group B rally game with first-person cockpits, pacenotes and three biomes.",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "serve": "python3 -m http.server 8080"
+  }
+}
