@@ -4,6 +4,9 @@ export class Input {
   constructor(canvas) {
     this.canvas = canvas;
     this.keys = new Set();
+    this.touch = { left: 0, right: 0, throttle: 0, brake: 0, handbrake: 0 };
+    this.touchLookId = null;
+    this.touchLast = { x: 0, y: 0 };
     this.throttle = 0;
     this.brake = 0;
     this.handbrake = 0;
@@ -17,6 +20,7 @@ export class Input {
     this.onReset = null;
     this.onMute = null;
     this.onHelp = null;
+    this.onCamera = null;
     this.gamepadIndex = null;
     this.prevButtons = [];
     this.hasGamepad = false;
@@ -30,20 +34,45 @@ export class Input {
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch') {
+        if (this.touchLookId !== null) return;
+        this.touchLookId = e.pointerId;
+        this.touchLast.x = e.clientX;
+        this.touchLast.y = e.clientY;
+        try { canvas.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
+        return;
+      }
       if (e.button === 2) {
         this.mouseLook = true;
-        canvas.setPointerCapture?.(e.pointerId);
+        try { canvas.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
         canvas.style.cursor = 'grabbing';
       }
     });
     canvas.addEventListener('pointerup', (e) => {
+      if (e.pointerType === 'touch' && e.pointerId === this.touchLookId) {
+        this.touchLookId = null;
+        return;
+      }
       if (e.button === 2) {
         this.mouseLook = false;
         canvas.style.cursor = '';
       }
     });
-    canvas.addEventListener('pointercancel', () => { this.mouseLook = false; });
+    canvas.addEventListener('pointercancel', (e) => {
+      if (e.pointerType === 'touch') this.touchLookId = null;
+      this.mouseLook = false;
+    });
     canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'touch') {
+        if (e.pointerId !== this.touchLookId) return;
+        const dx = e.clientX - this.touchLast.x;
+        const dy = e.clientY - this.touchLast.y;
+        this.touchLast.x = e.clientX;
+        this.touchLast.y = e.clientY;
+        this.lookYaw = clamp(this.lookYaw - dx * 0.0045 * this.lookSens, -1.6, 1.6);
+        this.lookPitch = clamp(this.lookPitch - dy * 0.0032 * this.lookSens, -0.4, 0.45);
+        return;
+      }
       if (!this.mouseLook) return;
       this.lookYaw = clamp(this.lookYaw - e.movementX * 0.0028 * this.lookSens, -1.5, 1.5);
       this.lookPitch = clamp(this.lookPitch - e.movementY * 0.0022 * this.lookSens, -0.38, 0.42);
@@ -75,6 +104,7 @@ export class Input {
       if (e.code === 'KeyR') { this.onReset?.(); return; }
       if (e.code === 'KeyM') { this.onMute?.(); return; }
       if (e.code === 'KeyH') { this.onHelp?.(); return; }
+      if (e.code === 'KeyC') { this.onCamera?.(); return; }
       this.keys.add(e.code);
     } else {
       this.keys.delete(e.code);
@@ -97,6 +127,7 @@ export class Input {
     if (just(9)) this.onPause?.();
     if (just(3)) this.onReset?.();
     if (just(8)) this.onMute?.();
+    if (just(4)) this.onCamera?.();
     this.prevButtons = b.map((x) => x && x.pressed);
     const ax = Math.abs(pad.axes[0] || 0) > 0.12 ? pad.axes[0] : 0;
     const ay = Math.abs(pad.axes[1] || 0) > 0.12 ? pad.axes[1] : 0;
@@ -120,6 +151,11 @@ export class Input {
     let throttle = (k.has('KeyW') || k.has('ArrowUp')) ? 1 : 0;
     let brake = (k.has('KeyS') || k.has('ArrowDown')) ? 1 : 0;
     let handbrake = k.has('Space') ? 1 : 0;
+    const touch = this.touch;
+    if (touch.left || touch.right) steerTarget = (touch.left ? 1 : 0) - (touch.right ? 1 : 0);
+    if (touch.throttle) throttle = Math.max(throttle, touch.throttle);
+    if (touch.brake) brake = Math.max(brake, touch.brake);
+    if (touch.handbrake) handbrake = Math.max(handbrake, touch.handbrake);
 
     const gp = this._pollGamepad(dt);
     if (gp) {
@@ -148,8 +184,8 @@ export class Input {
     this.brake = damp(this.brake, brake, 20, dt);
     this.handbrake = damp(this.handbrake, handbrake, 16, dt);
 
-    // spring back when neither the mouse nor the right stick is holding the view
-    if (!this.mouseLook && !this.gamepadLookActive && !this.keyboardLookActive) {
+    // spring back when neither the mouse, touch, gamepad nor key is holding the view
+    if (!this.mouseLook && this.touchLookId === null && !this.gamepadLookActive && !this.keyboardLookActive) {
       this.lookYaw = damp(this.lookYaw, 0, 5.5, dt);
       this.lookPitch = damp(this.lookPitch, 0, 5.5, dt);
     }
@@ -176,5 +212,11 @@ export class Input {
     this.mouseLook = false;
     this.gamepadLookActive = false;
     this.keyboardLookActive = false;
+    this.touchLookId = null;
+    this.touch.left = 0;
+    this.touch.right = 0;
+    this.touch.throttle = 0;
+    this.touch.brake = 0;
+    this.touch.handbrake = 0;
   }
 }

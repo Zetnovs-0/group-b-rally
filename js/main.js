@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { Game } from './game.js';
 
 const canvas = document.getElementById('gl');
+const isTouchDevice = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+  (navigator.maxTouchPoints || 0) > 0;
+if (isTouchDevice) document.body.classList.add('touch-mode');
 
 function fail(message) {
   const el = document.createElement('div');
@@ -16,7 +19,7 @@ let renderer;
 try {
   renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    antialias: !isTouchDevice,
     powerPreference: 'high-performance',
     stencil: false,
   });
@@ -50,6 +53,15 @@ function resize() {
   game.resize(w, h);
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => {
+  setTimeout(resize, 180);
+  setTimeout(resize, 520);
+});
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    if (Math.abs(window.visualViewport.width - window.innerWidth) < 120) resize();
+  });
+}
 resize();
 
 document.addEventListener('visibilitychange', () => {

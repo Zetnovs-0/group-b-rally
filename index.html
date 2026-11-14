@@ -2,8 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#080c09" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Group B — Rally Legends</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230a0e0a'/%3E%3Cpath d='M10 40h44v8H10z' fill='%23f2c43a'/%3E%3Cpath d='M14 33h10v7H14zM28 24h10v16H28zM42 31h8v9h-8z' fill='%23e9e4d3'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="css/style.css" />
@@ -11,6 +14,7 @@
 <body>
 <div id="app">
   <canvas id="gl"></canvas>
+  <canvas id="glass-fx"></canvas>
   <div id="vignette"></div>
 
   <!-- ============================ MAIN MENU ============================ -->
@@ -62,6 +66,11 @@
         <div class="stage-list" id="stage-list"></div>
         <div class="stage-detail" id="stage-detail"></div>
         <div class="stage-intel" id="stage-intel"></div>
+        <div class="conditions">
+          <label class="cond"><span>TIME</span><select id="menu-time" aria-label="Time of day"></select></label>
+          <label class="cond"><span>WEATHER</span><select id="menu-weather" aria-label="Weather"></select></label>
+          <div class="cond-info"><span>CONDITIONS</span><b id="condition-line">STAGE DEFAULT</b></div>
+        </div>
         <button class="start-btn" id="btn-start">
           <span class="start-stripes"></span>
           <span class="start-main"><span class="start-label">START STAGE</span><span class="start-meta">SS01 · KIELDER · FOREST</span></span>
@@ -77,6 +86,7 @@
         <span><kbd>A</kbd><kbd>D</kbd> STEER</span>
         <span><kbd>SPACE</kbd> HANDBRAKE</span>
         <span><kbd>RMB</kbd> LOOK</span>
+        <span><kbd>C</kbd> CAMERA</span>
         <span><kbd>R</kbd> RECOVER</span>
         <span><kbd>ESC</kbd> PAUSE</span>
       </div>
@@ -116,6 +126,7 @@
         <button class="btn primary wide" id="btn-resume">RESUME</button>
         <button class="btn" id="btn-restart">RESTART STAGE</button>
         <button class="btn" id="btn-pause-settings">SETTINGS</button>
+        <button class="btn" id="btn-pause-camera">CHANGE CAMERA</button>
         <button class="btn danger" id="btn-quit">QUIT TO GARAGE</button>
       </div>
       <div class="modal-footnote">ESC TO RESUME · R TO RECOVER THE CAR WHILE DRIVING</div>
@@ -168,6 +179,18 @@
           <label class="switch"><input type="checkbox" id="set-voice" checked><i></i></label>
         </div>
         <div class="setting-row">
+          <div class="setting-label"><span>WEATHER</span><small>Clear, rain, storm, snow, fog</small></div>
+          <select id="set-weather-mode"></select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>TIME OF DAY</span><small>Dawn, day, dusk, night</small></div>
+          <select id="set-time-mode"></select>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span>CAMERA</span><small>Default driving view</small></div>
+          <select id="set-camera"></select>
+        </div>
+        <div class="setting-row">
           <div class="setting-label"><span>WEATHER FX</span><small>Snowfall & rain</small></div>
           <label class="switch"><input type="checkbox" id="set-weather" checked><i></i></label>
         </div>
@@ -189,7 +212,7 @@
         </div>
       </div>
       <div class="modal-actions">
-        <span class="modal-note">Graphics quality applies on the next stage start.</span>
+        <span class="modal-note">Graphics, weather and time of day apply on the next stage start.</span>
         <button class="btn primary" id="btn-settings-done">DONE</button>
       </div>
     </div>
@@ -209,6 +232,7 @@
           <div><kbd>A</kbd> <kbd>D</kbd><span>STEER</span></div>
           <div><kbd>SPACE</kbd><span>HANDBRAKE</span></div>
           <div><kbd>Q</kbd> <kbd>E</kbd><span>LOOK LEFT / RIGHT</span></div>
+          <div><kbd>C</kbd><span>CHANGE CAMERA</span></div>
           <div><kbd>R</kbd><span>RECOVER TO ROAD</span></div>
           <div><kbd>ESC</kbd><span>PAUSE</span></div>
           <div><kbd>H</kbd><span>THIS BRIEFING</span></div>
@@ -221,8 +245,19 @@
           <div><kbd>LS</kbd><span>STEER</span></div>
           <div><kbd>A</kbd><span>HANDBRAKE</span></div>
           <div><kbd>RS</kbd><span>LOOK AROUND</span></div>
+          <div><kbd>LB</kbd><span>CHANGE CAMERA</span></div>
           <div><kbd>Y</kbd><span>RECOVER</span></div>
           <div><kbd>START</kbd><span>PAUSE</span></div>
+        </div>
+        <div class="help-block">
+          <h3>TOUCH</h3>
+          <div><kbd>◀</kbd> <kbd>▶</kbd><span>STEER</span></div>
+          <div><kbd>GAS</kbd><span>THROTTLE</span></div>
+          <div><kbd>BRAKE</kbd><span>BRAKE / REVERSE</span></div>
+          <div><kbd>HB</kbd><span>HANDBRAKE</span></div>
+          <div><kbd>CAM</kbd><span>CHANGE CAMERA</span></div>
+          <div><kbd>DRAG</kbd><span>LOOK AROUND</span></div>
+          <div><kbd>II</kbd><span>PAUSE</span></div>
         </div>
       </div>
       <div class="help-tip">
@@ -235,7 +270,37 @@
 
   <div id="toast" class="toast"></div>
   <div id="game-hint" class="game-hint hidden">
-    <span>HOLD <b>RMB</b> OR <b>Q</b>/<b>E</b> TO LOOK</span><i></i><span><b>R</b> TO RECOVER</span><i></i><span><b>ESC</b> PAUSE</span>
+    <span>HOLD <b>RMB</b> OR <b>Q</b>/<b>E</b> TO LOOK</span><i></i><span><b>C</b> CAMERA</span><i></i><span><b>R</b> TO RECOVER</span><i></i><span><b>ESC</b> PAUSE</span>
+  </div>
+
+  <!-- ============================ TOUCH ============================ -->
+  <div id="touch-controls" class="touch-controls hidden">
+    <div class="touch-system">
+      <button class="touch-sys" id="touch-pause" aria-label="Pause">II</button>
+      <button class="touch-sys" id="touch-camera" aria-label="Change camera">CAM</button>
+      <button class="touch-sys" id="touch-recover" aria-label="Recover car">R</button>
+    </div>
+    <div class="touch-steer">
+      <button class="touch-pad" data-touch="left" aria-label="Steer left">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5 8 12l7 7"/></svg>
+      </button>
+      <button class="touch-pad" data-touch="right" aria-label="Steer right">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+    <div class="touch-pedals">
+      <button class="touch-pedal brake" data-touch="brake" aria-label="Brake"><span>BRAKE</span><i></i></button>
+      <button class="touch-pedal hand" data-touch="handbrake" aria-label="Handbrake"><span>HB</span></button>
+      <button class="touch-pedal gas" data-touch="throttle" aria-label="Throttle"><span>GAS</span><i></i></button>
+    </div>
+  </div>
+
+  <div id="rotate-hint" class="rotate-hint hidden">
+    <div class="rotate-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="7" y="2" width="10" height="20" rx="1.6"/><path d="M3 9a9 9 0 0 1 15-4M21 15a9 9 0 0 1-15 4"/><path d="M18 2v3h-3M6 22v-3h3"/></svg>
+    </div>
+    <div class="rotate-title">ROTATE YOUR DEVICE</div>
+    <div class="rotate-sub">GROUP B IS PLAYED IN LANDSCAPE</div>
   </div>
 </div>
 <script type="importmap">

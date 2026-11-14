@@ -258,6 +258,51 @@ export function makeSunTexture() {
   return makeCanvasTexture(canvas);
 }
 
+/* Soft, lumpy cloud puff used by the sky dome. */
+export function makeCloudTexture() {
+  const { canvas, ctx } = canvas2D(256, 160);
+  const puffs = [
+    [78, 92, 62], [126, 78, 74], [178, 96, 56], [102, 112, 46], [156, 112, 44],
+  ];
+  for (const [x, y, r] of puffs) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,255,255,.9)');
+    g.addColorStop(0.55, 'rgba(255,255,255,.45)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // flatten the base a little
+  ctx.globalCompositeOperation = 'destination-out';
+  const fade = ctx.createLinearGradient(0, 128, 0, 160);
+  fade.addColorStop(0, 'rgba(0,0,0,0)');
+  fade.addColorStop(1, 'rgba(0,0,0,1)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 128, 256, 32);
+  ctx.globalCompositeOperation = 'source-over';
+  return makeCanvasTexture(canvas);
+}
+
+/* Tyre-mark blob (soft ellipse with a little tread grain). */
+export function makeSkidTexture() {
+  const { canvas, ctx } = canvas2D(64, 128);
+  const g = ctx.createLinearGradient(0, 0, 0, 128);
+  g.addColorStop(0, 'rgba(255,255,255,0)');
+  g.addColorStop(0.18, 'rgba(255,255,255,.85)');
+  g.addColorStop(0.82, 'rgba(255,255,255,.85)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(8, 0, 48, 128);
+  ctx.globalCompositeOperation = 'destination-out';
+  for (let x = 10; x < 56; x += 8) {
+    ctx.fillStyle = 'rgba(0,0,0,.22)';
+    ctx.fillRect(x, 0, 3, 128);
+  }
+  return makeCanvasTexture(canvas);
+}
+
 export function makeGrimeTexture() {
   const { canvas, ctx } = canvas2D(512, 256);
   ctx.clearRect(0, 0, 512, 256);

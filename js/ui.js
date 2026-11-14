@@ -1,6 +1,6 @@
 import {
   CARS, STAGES, getCar, getStage, loadSettings, saveSettings, getBest, clearBests,
-  carDerived, BIOME_LABEL,
+  carDerived, BIOME_LABEL, WEATHER_MODES, TIME_MODES, CAMERA_MODES, resolveConditions,
 } from './config.js';
 import { getStageMetrics } from './track.js';
 import { formatTime, formatDelta } from './util.js';
@@ -31,6 +31,7 @@ export class UI {
     this.onResume = null;
     this.onQuit = null;
     this.onNextStage = null;
+    this.onCamera = null;
     this.onSelection = null;
     this.onSettingsChange = null;
     this.onUiSound = null;
@@ -80,7 +81,14 @@ export class UI {
       toast: $('#toast'),
       gameHint: $('#game-hint'),
       soundBtn: $('#btn-sound'),
+      menuWeather: $('#menu-weather'),
+      menuTime: $('#menu-time'),
+      setWeather: $('#set-weather-mode'),
+      setTime: $('#set-time-mode'),
+      setCamera: $('#set-camera'),
+      conditionLine: $('#condition-line'),
     };
+    this._renderConditionOptions();
     this._renderCarList();
     this._renderStageList();
     this._syncSelection();
@@ -363,17 +371,17 @@ export class UI {
       <span>0—100 EST.</span><b>${est0to100.toFixed(1)} S</b>
       <span>GEARBOX</span><b>6-SPEED</b>
       <span>HOMOLOGATION</span><b>${car.year}</b>`;
-    const weatherLabel = stage.env.weather === 'rain' ? 'LIGHT RAIN'
-      : stage.env.weather === 'snow' ? 'SNOWFALL' : 'OVERCAST';
+    const cond = resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
     const hazardCount = stage.biome === 'jungle' ? 7 : 5;
     const rec = stage.biome === 'snow' ? 'STUDS' : stage.biome === 'jungle' ? 'WET' : 'GRAVEL';
     this.dom.stageIntel.innerHTML = `
-      <div><span>WEATHER</span><b>${weatherLabel}</b></div>
+      <div><span>WEATHER</span><b id="intel-weather">${cond.weatherLabel} / ${cond.timeLabel}</b></div>
       <div><span>HAZARD ZONES</span><b>${hazardCount}</b></div>
       <div><span>TYRE CALL</span><b>${rec}</b></div>`;
     this.dom.startMeta.textContent = `${stage.ss} · ${stage.name} · ${biome}`;
     this._refreshBest();
     this._saveSelection();
+    this._updateConditionLine();
     this.onSelection?.(car, stage);
   }
 
@@ -399,6 +407,54 @@ export class UI {
      ============================================================ */
   _click() { this.onUiSound?.(); }
 
+  _renderConditionOptions() {
+    const opts = (modes) => modes.map((m) => `<option value="${m.id}">${m.label}</option>`).join('');
+    const weather = opts(WEATHER_MODES);
+    const time = opts(TIME_MODES);
+    const camera = opts(CAMERA_MODES);
+    for (const el of [this.dom.menuWeather, this.dom.setWeather]) {
+      if (el) el.innerHTML = weather;
+    }
+    for (const el of [this.dom.menuTime, this.dom.setTime]) {
+      if (el) el.innerHTML = time;
+    }
+    if (this.dom.setCamera) this.dom.setCamera.innerHTML = camera;
+  }
+
+  _syncConditionUi() {
+    const s = this.settings;
+    for (const el of [this.dom.menuWeather, this.dom.setWeather]) {
+      if (el && el.value !== s.weather) el.value = s.weather;
+    }
+    for (const el of [this.dom.menuTime, this.dom.setTime]) {
+      if (el && el.value !== s.timeOfDay) el.value = s.timeOfDay;
+    }
+    if (this.dom.setCamera && this.dom.setCamera.value !== s.camera) this.dom.setCamera.value = s.camera;
+    this._updateConditionLine();
+  }
+
+  _updateConditionLine() {
+    const el = this.dom.conditionLine;
+    const cond = resolveConditions(this.selectedStage, this.settings.weather, this.settings.timeOfDay);
+    const intel = document.getElementById('intel-weather');
+    if (intel) intel.textContent = `${cond.weatherLabel} / ${cond.timeLabel}`;
+    if (!el) return;
+    const weather = WEATHER_MODES.find((m) => m.id === this.settings.weather)?.label || 'AUTO';
+    const time = TIME_MODES.find((m) => m.id === this.settings.timeOfDay)?.label || 'AUTO';
+    const label = weather === 'AUTO' && time === 'AUTO' ? 'STAGE DEFAULT' : `${weather} · ${time}`;
+    el.textContent = label;
+    el.classList.toggle('auto', weather === 'AUTO' && time === 'AUTO');
+  }
+
+  setCameraValue(mode) {
+    this.settings.camera = mode;
+    if (this.dom.setCamera) this.dom.setCamera.value = mode;
+  }
+
+  commitSettings() {
+    this._commitSettings();
+  }
+
   _bindEvents() {
     $('#btn-settings').addEventListener('click', () => { this._click(); this.openSettings(false); });
     $('#btn-help').addEventListener('click', () => { this._click(); this.openHelp(); });
@@ -411,12 +467,13 @@ export class UI {
     $('#btn-settings-done').addEventListener('click', () => this.closeSettings());
     $('#btn-help-close').addEventListener('click', () => this.closeHelp());
     $('#btn-help-done').addEventListener('click', () => this.closeHelp());
-    for (const id of ['#btn-resume', '#btn-restart', '#btn-pause-settings', '#btn-quit']) {
+    for (const id of ['#btn-resume', '#btn-restart', '#btn-pause-settings', '#btn-pause-camera', '#btn-quit']) {
       $(id).addEventListener('click', () => this._click());
     }
     $('#btn-resume').addEventListener('click', () => this.onResume?.());
     $('#btn-restart').addEventListener('click', () => this.onRestart?.());
     $('#btn-pause-settings').addEventListener('click', () => this.openSettings(true));
+    $('#btn-pause-camera').addEventListener('click', () => this.onCamera?.());
     $('#btn-quit').addEventListener('click', () => this.onQuit?.());
     $('#btn-next-stage').addEventListener('click', () => { this._click(); this.onNextStage?.(); });
     $('#btn-retry').addEventListener('click', () => { this._click(); this.onRestart?.(); });
@@ -457,6 +514,19 @@ export class UI {
     bind('#set-shake', 'shake', (el) => el.checked);
     bind('#set-sensitivity', 'lookSensitivity', (el) => parseInt(el.value, 10) / 100);
     bind('#set-units', 'units');
+    const bindCond = (el, key) => {
+      if (!el) return;
+      el.addEventListener('change', () => {
+        this.settings[key] = el.value;
+        this._commitSettings();
+        this._syncConditionUi();
+      });
+    };
+    bindCond(this.dom.menuWeather, 'weather');
+    bindCond(this.dom.menuTime, 'timeOfDay');
+    bindCond(this.dom.setWeather, 'weather');
+    bindCond(this.dom.setTime, 'timeOfDay');
+    bindCond(this.dom.setCamera, 'camera');
     $('#btn-clear-records').addEventListener('click', () => {
       this._click();
       if (!window.confirm('Clear all stage records stored on this machine?')) return;
@@ -494,6 +564,7 @@ export class UI {
     $('#set-shake').checked = !!this.settings.shake;
     $('#set-sensitivity').value = Math.round(this.settings.lookSensitivity * 100);
     $('#set-units').value = this.settings.units;
+    this._syncConditionUi();
     this._updateSettingLabels();
   }
 
@@ -542,6 +613,7 @@ export class UI {
      SCREEN STATE
      ============================================================ */
   showMenu() {
+    document.body.classList.remove('in-race');
     this._blur();
     this.dom.menu.classList.remove('hidden');
     this.dom.loading.classList.add('hidden');
@@ -551,18 +623,21 @@ export class UI {
     this.dom.gameHint.classList.add('hidden');
     this.dom.startBtn.disabled = false;
     this._refreshBest();
+    this._updateConditionLine();
   }
 
   hideMenu() { this._blur(); this.dom.menu.classList.add('hidden'); }
 
-  showLoading(stage, car) {
+  showLoading(stage, car, conditions) {
     this.dom.menu.classList.add('hidden');
     this.dom.results.classList.add('hidden');
     this.dom.pause.classList.add('hidden');
     this.dom.countdown.classList.add('hidden');
     this.dom.loading.classList.remove('hidden');
     this.dom.loadingKicker.textContent = `${stage.ss} // ${stage.name} // ${BIOME_LABEL[stage.biome]}`;
-    this.dom.loadingCar.textContent = `${car.name} · ${car.layout} · ${car.tyre}`;
+    this.dom.loadingCar.textContent = conditions
+      ? `${car.name} · ${car.layout} · ${conditions.weatherLabel} · ${conditions.timeLabel}`
+      : `${car.name} · ${car.layout} · ${car.tyre}`;
     this.dom.loadingTip.textContent = TIPS[(Math.random() * TIPS.length) | 0];
     this.setLoading(0, 'SURVEYING ROUTE');
   }
@@ -618,7 +693,8 @@ export class UI {
     this.dom.results.classList.remove('hidden');
     this.dom.resultTitle.textContent = data.stage.name;
     this.dom.resultSub.textContent =
-      `${data.stage.ss} · ${BIOME_LABEL[data.stage.biome]} · ${(data.length / 1000).toFixed(2)} KM`;
+      `${data.stage.ss} · ${BIOME_LABEL[data.stage.biome]} · ${(data.length / 1000).toFixed(2)} KM` +
+      (data.conditions ? ` · ${data.conditions.weatherLabel} / ${data.conditions.timeLabel}` : '');
     this.dom.resultTime.textContent = formatTime(data.time);
     this.dom.resultBest.textContent = data.best ? formatTime(data.best) : '--:--.--';
     this.dom.resultDelta.textContent = data.delta != null ? formatDelta(data.delta) : '--';

@@ -164,7 +164,7 @@ export class Cockpit {
     }
     // wipers when wet
     if (model.wipers) {
-      const wet = this.stage.env.weather !== 'none';
+      const wet = this.stage.env.wipers ?? (this.stage.env.weather !== 'none');
       if (wet) {
         this.wiperPhase += dt * 2.0;
         const sweep = (Math.sin(this.wiperPhase) * 0.5 + 0.5);

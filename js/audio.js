@@ -282,6 +282,37 @@ export class AudioEngine {
     osc.stop(t + 0.28);
   }
 
+  thunder(strength = 1) {
+    if (!this.ready) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + 0.05;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.playbackRate.value = 0.22 + Math.random() * 0.16;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(420, t);
+    filter.frequency.exponentialRampToValueAtTime(110, t + 2.2);
+    filter.Q.value = 0.7;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.55 * strength, t + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 2.6);
+    src.connect(filter).connect(gain).connect(this.nodes.master);
+    src.start(t);
+    src.stop(t + 2.8);
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(48, t);
+    osc.frequency.exponentialRampToValueAtTime(26, t + 1.4);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.22 * strength, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+    osc.connect(g2).connect(this.nodes.master);
+    osc.start(t);
+    osc.stop(t + 1.7);
+  }
+
   beep(freq = 880, duration = 0.12, volume = 0.08, type = 'square') {
     if (!this.ready) return;
     const ctx = this.ctx;

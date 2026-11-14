@@ -15,6 +15,10 @@ export const DEFAULT_SETTINGS = {
   units: 'kph',
   weatherFx: true,
   showHints: true,
+  weather: 'auto',
+  timeOfDay: 'auto',
+  camera: 'cockpit',
+  headlights: true,
 };
 
 /* ---------- Cars ---------- */
@@ -207,6 +211,7 @@ const ENV = {
     treeAlt: 0x7b8a60,
     trunk: 0x4a3b2b,
     weather: 'none',
+    defaultTime: 'day',
     rainWet: 0.0,
     road: 'gravel',
     surfaceName: 'LOOSE GRAVEL',
@@ -234,6 +239,7 @@ const ENV = {
     treeAlt: 0x63814a,
     trunk: 0x4c3e2a,
     weather: 'rain',
+    defaultTime: 'day',
     rainWet: 0.35,
     road: 'mud',
     surfaceName: 'WET MUD',
@@ -261,6 +267,7 @@ const ENV = {
     treeAlt: 0x8ba28f,
     trunk: 0x4b3e30,
     weather: 'snow',
+    defaultTime: 'day',
     rainWet: 0.0,
     road: 'snow',
     surfaceName: 'PACKED SNOW',
@@ -268,6 +275,218 @@ const ENV = {
     hint: 'Ice under the snow. Brake early, steer gently.',
   },
 };
+
+/* ---------- Time of day & weather ---------- */
+/* The base palettes above define a stage's identity. These presets grade the
+   palette and the lighting so any stage can be driven at dawn, dusk, in a
+   storm, at night, etc. without authoring a second set of assets. */
+export const TIME_MODES = [
+  { id: 'auto', label: 'AUTO' },
+  { id: 'dawn', label: 'DAWN' },
+  { id: 'day', label: 'DAY' },
+  { id: 'dusk', label: 'DUSK' },
+  { id: 'night', label: 'NIGHT' },
+];
+
+export const WEATHER_MODES = [
+  { id: 'auto', label: 'AUTO' },
+  { id: 'clear', label: 'CLEAR' },
+  { id: 'overcast', label: 'OVERCAST' },
+  { id: 'rain', label: 'RAIN' },
+  { id: 'storm', label: 'STORM' },
+  { id: 'snow', label: 'SNOW' },
+  { id: 'fog', label: 'FOG' },
+];
+
+export const CAMERA_MODES = [
+  { id: 'cockpit', label: 'COCKPIT', fov: 75 },
+  { id: 'bonnet', label: 'BONNET', fov: 78 },
+  { id: 'chase', label: 'CHASE', fov: 68 },
+  { id: 'bumper', label: 'BUMPER', fov: 84 },
+];
+
+const TIME_PRESETS = {
+  day: {
+    sunIntensity: 1, hemiIntensity: 1, exposure: 1, fogMul: 1,
+    stars: 0, headlights: 0, horizonGlow: 0.18, sunScale: 1,
+  },
+  dawn: {
+    sunDir: [-0.58, 0.19, 0.4], sunColor: 0xffb078, sunIntensity: 0.52,
+    hemiIntensity: 0.72, exposure: 0.94, fogMul: 1.45,
+    tint: 0xffb488, tintAmt: 0.3, skyDim: 1.02,
+    fogTint: 0xe2ac86, fogTintAmt: 0.42,
+    stars: 0.09, headlights: 0.55, horizonGlow: 1.1, glow: 0xffb478, sunScale: 1.25,
+  },
+  dusk: {
+    sunDir: [0.62, 0.16, -0.5], sunColor: 0xff8a54, sunIntensity: 0.5,
+    hemiIntensity: 0.62, exposure: 0.92, fogMul: 1.5,
+    tint: 0xd9785a, tintAmt: 0.34, skyDim: 0.92,
+    fogTint: 0xb97a68, fogTintAmt: 0.46,
+    stars: 0.28, headlights: 0.75, horizonGlow: 1.2, glow: 0xff7f4d, sunScale: 1.3,
+  },
+  night: {
+    sunDir: [-0.34, 0.5, 0.44], sunColor: 0x9fb9e6, sunIntensity: 0.17,
+    hemiIntensity: 0.24, exposure: 0.9, fogMul: 1.35,
+    tint: 0x12203a, tintAmt: 0.84, skyDim: 1.0,
+    fogTint: 0x0c1725, fogTintAmt: 0.88,
+    stars: 1, headlights: 1, horizonGlow: 0.3, glow: 0x8fb4e0, sunScale: 0.4, moon: true,
+  },
+};
+
+const WEATHER_PRESETS = {
+  clear: {
+    label: 'CLEAR', precip: 'none', intensity: 0,
+    skyDim: 1, desat: 0, fogMul: 0.82, sunMul: 1.04, hemiMul: 1,
+    exposure: 1.03, gripMul: 1.03, wetness: 0, cloud: 0.06, wind: 0.15,
+  },
+  overcast: {
+    label: 'OVERCAST', precip: 'none', intensity: 0,
+    skyDim: 0.8, desat: 0.38, fogMul: 1.35, sunMul: 0.42, hemiMul: 0.92,
+    exposure: 0.97, gripMul: 0.97, wetness: 0.12, cloud: 0.85, wind: 0.4,
+  },
+  rain: {
+    label: 'RAIN', precip: 'rain', intensity: 1,
+    skyDim: 0.58, desat: 0.55, fogMul: 1.85, sunMul: 0.14, hemiMul: 0.8,
+    exposure: 0.92, gripMul: 0.84, wetness: 0.68, cloud: 1, wind: 0.9,
+    wipers: true, headlights: 0.14,
+  },
+  storm: {
+    label: 'STORM', precip: 'rain', intensity: 1.45,
+    skyDim: 0.44, desat: 0.7, fogMul: 2.3, sunMul: 0.06, hemiMul: 0.66,
+    exposure: 0.85, gripMul: 0.75, wetness: 0.92, cloud: 1, wind: 1.6,
+    wipers: true, headlights: 0.3, lightning: true,
+  },
+  snow: {
+    label: 'SNOW', precip: 'snow', intensity: 1,
+    skyDim: 0.88, desat: 0.4, fogMul: 2.0, sunMul: 0.34, hemiMul: 0.95,
+    exposure: 1.0, gripMul: 0.86, wetness: 0.24, cloud: 0.95, wind: 0.8,
+    wipers: true, headlights: 0.12,
+  },
+  fog: {
+    label: 'FOG', precip: 'none', intensity: 0,
+    skyDim: 0.8, desat: 0.55, fogMul: 4.6, sunMul: 0.3, hemiMul: 0.85,
+    exposure: 0.98, gripMul: 0.9, wetness: 0.4, cloud: 0.3, wind: 0.1,
+    headlights: 0.22, fogBanks: true,
+  },
+};
+
+const AUTO_WEATHER = { none: 'clear', rain: 'rain', snow: 'snow' };
+
+function rgb(hex) {
+  return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+}
+function toHex(r, g, b) {
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v)));
+  return (c(r) << 16) | (c(g) << 8) | c(b);
+}
+export function mixHex(a, b, t) {
+  const [ar, ag, ab] = rgb(a);
+  const [br, bg, bb] = rgb(b);
+  return toHex(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t);
+}
+export function shadeHex(c, k) {
+  const [r, g, b] = rgb(c);
+  return toHex(r * k, g * k, b * k);
+}
+function desatHex(c, amt) {
+  if (!amt) return c;
+  const [r, g, b] = rgb(c);
+  const l = r * 0.299 + g * 0.587 + b * 0.114;
+  return toHex(r + (l - r) * amt, g + (l - g) * amt, b + (l - b) * amt);
+}
+
+/* Returns a self-contained environment for a run, plus the resolved condition
+   descriptors used by the UI and the effects layer. */
+export function resolveConditions(stage, weatherId = 'auto', timeId = 'auto') {
+  const base = stage.env;
+  const weatherKey = weatherId === 'auto'
+    ? (AUTO_WEATHER[base.weather] || 'clear')
+    : (WEATHER_PRESETS[weatherId] ? weatherId : 'clear');
+  const timeKey = timeId === 'auto'
+    ? (TIME_PRESETS[base.defaultTime] ? base.defaultTime : 'day')
+    : (TIME_PRESETS[timeId] ? timeId : 'day');
+  const baseW = WEATHER_PRESETS[weatherKey];
+  // 'AUTO' keeps the stage's authored look: the base palette already encodes
+  // its weather, so only the extra effects (precip, wind, wipers) are added.
+  const w = weatherId === 'auto'
+    ? {
+      ...baseW,
+      skyDim: 1,
+      desat: 0,
+      fogMul: 1,
+      sunMul: 1,
+      hemiMul: 1,
+      exposure: 1,
+      gripMul: 1,
+      wetness: base.rainWet || 0,
+      headlights: 0,
+      lightning: false,
+    }
+    : baseW;
+  const t = TIME_PRESETS[timeKey];
+
+  const grade = (c) => {
+    let col = shadeHex(desatHex(c, w.desat), w.skyDim);
+    if (t.tint) col = mixHex(col, t.tint, t.tintAmt);
+    if (t.skyDim && t.skyDim !== 1) col = shadeHex(col, t.skyDim);
+    return col;
+  };
+  const gradeFog = (c) => {
+    let col = shadeHex(desatHex(c, w.desat), w.skyDim);
+    if (t.fogTint) col = mixHex(col, t.fogTint, t.fogTintAmt);
+    return col;
+  };
+
+  const env = { ...base };
+  env.skyTop = grade(base.skyTop);
+  env.skyHorizon = grade(base.skyHorizon);
+  env.skyBottom = grade(base.skyBottom);
+  env.fog = gradeFog(base.fog);
+  env.fogDensity = Math.min(0.075, base.fogDensity * t.fogMul * w.fogMul);
+  env.ground = grade(base.ground);
+  env.groundDark = grade(base.groundDark);
+  env.dirt = grade(base.dirt);
+  env.hill = grade(base.hill);
+  env.tree = grade(base.tree);
+  env.treeAlt = grade(base.treeAlt);
+  env.trunk = grade(base.trunk);
+  env.hemiSky = grade(base.hemiSky);
+  env.hemiGround = grade(base.hemiGround);
+  env.sunColor = t.sunColor != null ? t.sunColor : base.sunColor;
+  env.sunIntensity = base.sunIntensity * (t.sunIntensity ?? 1) * (w.sunMul ?? 1);
+  env.hemiIntensity = base.hemiIntensity * (t.hemiIntensity ?? 1) * (w.hemiMul ?? 1);
+  env.exposure = base.exposure * (t.exposure ?? 1) * (w.exposure ?? 1);
+  env.sunDir = (t.sunDir || base.sunDir).slice();
+  env.weather = w.precip;
+  env.weatherLabel = w.label;
+  env.weatherIntensity = w.intensity;
+  env.lightning = !!w.lightning;
+  env.stars = (t.stars ?? 0) * Math.max(0, 1 - (w.cloud || 0));
+  env.clouds = Math.max(base.clouds || 0, w.cloud || 0);
+  env.horizonGlow = t.horizonGlow ?? 0;
+  env.glowColor = t.glow || base.skyHorizon;
+  env.moon = !!t.moon && (w.cloud || 0) < 0.7;
+  env.sunScale = t.sunScale ?? 1;
+  env.headlights = Math.max(t.headlights || 0, w.headlights || 0);
+  env.wipers = !!w.wipers;
+  env.wetness = Math.max(base.rainWet || 0, w.wetness || 0);
+  env.wind = w.wind ?? 0.2;
+  env.fogBanks = !!w.fogBanks;
+  env.timeLabel = timeKey.toUpperCase();
+  if (weatherKey === 'snow') env.surfaceName = 'SNOW-COVERED';
+  else if (env.wetness > 0.4 && !/^WET /.test(base.surfaceName)) env.surfaceName = `WET ${base.surfaceName}`;
+  else env.surfaceName = base.surfaceName;
+
+  return {
+    env,
+    weather: weatherKey,
+    time: timeKey,
+    weatherLabel: w.label,
+    timeLabel: timeKey.toUpperCase(),
+    gripMul: w.gripMul,
+    label: `${w.label} · ${timeKey.toUpperCase()}`,
+  };
+}
 
 /* ---------- Stages ---------- */
 export const STAGES = [
