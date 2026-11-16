@@ -10,6 +10,7 @@ import {
   makeBarkTexture, makeCanopyTexture, makePalmFrondTexture, makeFlowerTexture,
   makeReedTexture, makeRockTexture, makeLeafSurfaceTexture, makeWoodTexture,
   makeIceTexture, makeWaterfallTexture, makeAnimalTexture, makeSoftDotTexture,
+  makeCityFacadeTexture, makeCityStorefrontTexture,
 } from './textures.js';
 import { EndlessRoute } from './endlessRoute.js';
 import { RoadNetwork } from './roadNetwork.js';
@@ -745,6 +746,11 @@ export class Track {
         { type: 'fesh', label: 'FESH-FESH', mul: 0.52, color: '#c1935d' },
         { type: 'rocks', label: 'ROCKS', mul: 0.7, color: '#9d896c' },
       ],
+      city: [
+        { type: 'wet', label: 'STANDING WATER', mul: 0.72, color: '#6f9aa5' },
+        { type: 'moss', label: 'WET LEAVES', mul: 0.78, color: '#a88a4a' },
+        { type: 'ruts', label: 'ROADWORKS', mul: 0.74, color: '#c0ad88' },
+      ],
     }[biome] || [
       { type: 'loose', label: 'LOOSE GRAVEL', mul: 0.72, color: '#d8b769' },
     ];
@@ -1153,6 +1159,17 @@ export class Track {
         ) + 0.015;
       }
     }
+    if (this.stage.biome === 'city') {
+      // Kerbside parking and the raised pavement are real surfaces in the
+      // city, not just visuals. Keep the car level with the kerb it is on.
+      const edgeY = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset +
+        this.roadCrown(Math.sign(lateral || 1) * this.halfWidth);
+      if (absLat > this.halfWidth + 0.18 && absLat <= this.halfWidth + 2.45) {
+        height = edgeY - 0.012;
+      } else if (absLat > this.halfWidth + 2.45 && absLat <= this.halfWidth + 5.15) {
+        height = edgeY + 0.145;
+      }
+    }
     return {
       index: nearIdx, nearIndex: nearIdx, t, center, tangent, right, lateral, absLat,
       dist, progress: clamp(dist / this.length, 0, 1), grip, offRoad, hazard, hazardLabel,
@@ -1416,6 +1433,33 @@ export class Track {
 
   _addSkyIcons(skyGroup) {
     const biome = this.stage.biome;
+
+    if (biome === 'city') {
+      const rng = mulberry32(this.seed + 7701);
+      for (const [angle, dist, count, spread] of [
+        [0.32, 1280, 30, 520], [2.75, 1480, 24, 640],
+      ]) {
+        const parts = [];
+        for (let i = 0; i < count; i++) {
+          const w = 18 + rng() * 48;
+          const d = 16 + rng() * 42;
+          const h = 26 + Math.pow(rng(), 1.55) * 155;
+          const col = [0x4e5b64, 0x60656a, 0x3f4e59, 0x726c62, 0x596d78][i % 5];
+          partBox(parts, col, w, h, d,
+            (rng() - 0.5) * spread, h * 0.5, (rng() - 0.5) * spread * 0.55,
+            rng() * Math.PI * 2);
+          // A few rooftop beacons on the tallest towers.
+          if (h > 120 && rng() < 0.5) {
+            partBox(parts, 0xd35a3f, 0.9, 1.2, 0.9,
+              (rng() - 0.5) * spread, h + 0.6, (rng() - 0.5) * spread * 0.55);
+          }
+        }
+        this._addSkyline(skyGroup, parts, {
+          angle, dist, y: -18, opacity: 0.78, blend: 0.58,
+        });
+      }
+      return;
+    }
 
     if (biome === 'japan') {
       // A Fuji-like cone above the cedar sea.
@@ -2064,7 +2108,9 @@ export class Track {
     const dirt = new THREE.Color(this.env.dirt || 0x8a7c5e).lerp(white, 0.62);
     const dark = this.stage.biome === 'snow'
       ? new THREE.Color(0xccd8e6)
-      : new THREE.Color(0xd2d6c4);
+      : this.stage.biome === 'city'
+        ? new THREE.Color(0xa8a49a)
+        : new THREE.Color(0xd2d6c4);
     const rock = new THREE.Color(this.env.rock || 0x6e7064).lerp(white, 0.48);
     const moss = new THREE.Color(this.env.moss || this.env.treeAlt || 0x6b7f3a).lerp(white, 0.5);
     const snowShade = new THREE.Color(0xc7d8e8);
@@ -2100,9 +2146,10 @@ export class Track {
           0, 0.72
         );
         tmpC.lerp(rock, rockMix);
-        const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82, fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * 0.34;
+        const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82, fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) *
+          (this.stage.biome === 'city' ? 0.1 : 0.34);
         tmpC.lerp(moss, mossMix);
-        tmpC.lerp(dirt, nearRoad * 0.4);
+        tmpC.lerp(dirt, nearRoad * (this.stage.biome === 'city' ? 0.22 : 0.4));
         if (this.stage.biome === 'snow') {
           tmpC.lerp(snowShade, smoothstep(0.1, 3.0, Math.abs(rel)) * 0.2 + nearRoad * 0.1);
         }
@@ -2280,11 +2327,14 @@ export class Track {
     const biomeForShoulder = this.stage.biome;
     const shoulderColor = biomeForShoulder === 'snow'
       ? new THREE.Color(0xe3edf6)
-      : new THREE.Color(this.env.dirt).lerp(new THREE.Color(0xffffff), biomeForShoulder === 'forest' || biomeForShoulder === 'jungle' ? 0.35 : 0.55);
+      : biomeForShoulder === 'city'
+        ? new THREE.Color(0x8f8c83)
+        : new THREE.Color(this.env.dirt).lerp(new THREE.Color(0xffffff), biomeForShoulder === 'forest' || biomeForShoulder === 'jungle' ? 0.35 : 0.55);
     const shoulderSource = biomeForShoulder === 'snow' ? makeRoadTexture('snow')
       : biomeForShoulder === 'safari' ? makeRoadTexture('dirt')
-        : biomeForShoulder === 'japan' || biomeForShoulder === 'russia' ? makeRoadTexture('gravel')
-          : makeRoadTexture('gravel');
+        : biomeForShoulder === 'city' ? makeRoadTexture('tarmac')
+          : biomeForShoulder === 'japan' || biomeForShoulder === 'russia' ? makeRoadTexture('gravel')
+            : makeRoadTexture('gravel');
     const shoulderMat = new THREE.MeshStandardMaterial({
       map: shoulderSource.map,
       bumpMap: shoulderSource.bump,
@@ -2329,6 +2379,9 @@ export class Track {
       const m = new THREE.Mesh(g, shoulderMat);
       m.receiveShadow = true;
       scene.add(m);
+    }
+    if (this.stage.biome === 'city') {
+      this._addCitySidewalks(scene, 0, this.n - 1);
     }
     // wet sheen patches / puddles on the racing line
     if (wet >= 0.3) {
@@ -2562,6 +2615,7 @@ export class Track {
   _addPosts(scene, quality) {
     const stride = quality === 'high' ? 8 : 11;
     const biome = this.stage.biome;
+    if (biome === 'city') return;
     const isSnow = biome === 'snow';
     const isJapan = biome === 'japan';
     const isSafari = biome === 'safari';
@@ -2987,6 +3041,7 @@ export class Track {
   _addBiomeProps(scene, quality) {
     const biome = this.stage.biome;
     const rng = mulberry32(this.seed + 551);
+    if (biome === 'city') return;
     if (biome === 'japan') {
       this._addTorii(scene, 16, -1);
       this._addTorii(scene, Math.floor(this.n * 0.58), 1);
@@ -4384,6 +4439,7 @@ export class Track {
     if (biome === 'japan') this._japanSet(scene, quality);
     if (biome === 'russia') this._russiaSet(scene, quality);
     if (biome === 'safari') this._safariSet(scene, quality);
+    if (biome === 'city') this._addCitySet(scene, quality);
   }
 
   /* ---------------- roadside dressing ---------------- */
@@ -4391,6 +4447,7 @@ export class Track {
     const rng = mulberry32(this.seed + 31337);
     const biome = this.stage.biome;
     const isHigh = quality === 'high';
+    if (biome === 'city') return;
     const stride = isHigh ? 3 : 5;
 
     /* tyre stacks + hay bales on the outside of the quicker corners */
@@ -4568,6 +4625,766 @@ export class Track {
     }
   }
 
+
+  /* ============================================================
+     CITY BLOCKS
+     The city uses the same route/terrain system as every other stage,
+     but its roadside is built from sidewalks, shopfronts, facades,
+     street lamps and parked cars instead of trees and marker posts.
+     ============================================================ */
+  _cityAssets() {
+    if (this._cityCache) return this._cityCache;
+    const facadeMaterials = {};
+    for (const kind of ['brick', 'office', 'concrete', 'glass', 'render']) {
+      const tex = makeCityFacadeTexture(kind);
+      facadeMaterials[kind] = new THREE.MeshStandardMaterial({
+        map: tex.map,
+        emissiveMap: tex.emissive,
+        emissive: 0xffffff,
+        emissiveIntensity: 0.62,
+        roughness: tex.roughness,
+        metalness: kind === 'glass' || kind === 'office' ? 0.16 : 0.03,
+      });
+    }
+    const storefronts = {};
+    for (const kind of ['cafe', 'market', 'hotel', 'pharmacy', 'ramen', 'books',
+      'bar', 'bakery', 'cinema', 'garage', 'vinyl', 'florist']) {
+      const tex = makeCityStorefrontTexture(kind);
+      storefronts[kind] = new THREE.MeshStandardMaterial({
+        map: tex.map,
+        emissiveMap: tex.emissive,
+        emissive: 0xffffff,
+        emissiveIntensity: 0.78,
+        roughness: 0.58,
+        metalness: 0.06,
+      });
+    }
+    const tarmac = makeRoadTexture('tarmac');
+    const sidewalkTex = makeGroundTexture('city');
+    const sidewalkBump = makeGroundBumpTexture('city');
+    const sidewalkMat = new THREE.MeshStandardMaterial({
+      map: sidewalkTex,
+      bumpMap: sidewalkBump,
+      bumpScale: 0.02,
+      color: 0xb9b4a9,
+      roughness: 0.9,
+      metalness: 0.02,
+    });
+    const parkingMat = new THREE.MeshStandardMaterial({
+      map: tarmac.map,
+      bumpMap: tarmac.bump,
+      bumpScale: 0.024,
+      color: 0x8d8b83,
+      roughness: 0.8,
+      metalness: 0.04,
+    });
+    const detailMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.86, metalness: 0.08,
+    });
+    this._cityCache = {
+      facadeMaterials,
+      storefronts,
+      sidewalkMat,
+      parkingMat,
+      curbMat: new THREE.MeshStandardMaterial({ color: 0x929087, roughness: 0.82 }),
+      crosswalkMat: new THREE.MeshStandardMaterial({ color: 0xdedacb, roughness: 0.65 }),
+      detailMat,
+      lampPoleMat: new THREE.MeshStandardMaterial({ color: 0x2c3033, roughness: 0.42, metalness: 0.58 }),
+      lampHeadMat: new THREE.MeshStandardMaterial({
+        color: 0xffefd1, emissive: 0xffd08a, emissiveIntensity: 2.4,
+        roughness: 0.28, metalness: 0.12,
+      }),
+      lampGlassMat: new THREE.MeshStandardMaterial({
+        color: 0xfff3d8, emissive: 0xffd79a, emissiveIntensity: 1.3,
+        transparent: true, opacity: 0.35, depthWrite: false,
+      }),
+      tlRed: new THREE.MeshStandardMaterial({ color: 0x7e1211, emissive: 0xd2281c, emissiveIntensity: 1.8, roughness: 0.35 }),
+      tlAmber: new THREE.MeshStandardMaterial({ color: 0x5b3d10, emissive: 0xe49a20, emissiveIntensity: 0.25, roughness: 0.35 }),
+      tlGreen: new THREE.MeshStandardMaterial({ color: 0x123f25, emissive: 0x39b765, emissiveIntensity: 0.25, roughness: 0.35 }),
+      tlPoleMat: new THREE.MeshStandardMaterial({ color: 0x363a3b, roughness: 0.45, metalness: 0.55 }),
+      benchMat: new THREE.MeshStandardMaterial({ color: 0x584633, roughness: 0.85 }),
+      glassMat: new THREE.MeshPhysicalMaterial({
+        color: 0x7e9aa4, roughness: 0.08, metalness: 0.2,
+        transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false,
+      }),
+      waterMat: new THREE.MeshStandardMaterial({
+        color: 0x4d7786, roughness: 0.12, metalness: 0.2,
+        transparent: true, opacity: 0.72,
+      }),
+      awningColors: [0x8f3530, 0x2e5e53, 0x3a4a78, 0x8b6a2f, 0x6e3d68, 0x96472c],
+    };
+    return this._cityCache;
+  }
+
+  /** Flat parking apron + raised kerb + pavement along one route range. */
+  _addCitySidewalks(parent, i0, i1) {
+    if (i1 - i0 < 3) return;
+    const C = this._cityAssets();
+    const n = i1 - i0 + 1;
+    const parkingLats = [0.12, 1.25, 2.45];
+    const walkLats = [2.45, 3.8, 5.15];
+    for (const dir of [-1, 1]) {
+      // Parking strip (asphalt) at the road edge.
+      const rowCount = n * parkingLats.length;
+      const pos = new Float32Array(rowCount * 3);
+      const uv = new Float32Array(rowCount * 2);
+      for (let j = 0; j < n; j++) {
+        const s = this.samples[i0 + j];
+        const base = s.pos.y + this.roadYOffset + this.roadCrown(dir * this.halfWidth);
+        for (let l = 0; l < parkingLats.length; l++) {
+          const idx = j * parkingLats.length + l;
+          const lat = dir * (this.halfWidth + parkingLats[l]);
+          const x = s.pos.x + s.right.x * lat;
+          const z = s.pos.z + s.right.z * lat;
+          pos[idx * 3] = x;
+          pos[idx * 3 + 1] = base - 0.012;
+          pos[idx * 3 + 2] = z;
+          uv[idx * 2] = x * 0.13;
+          uv[idx * 2 + 1] = z * 0.13;
+        }
+      }
+      const ind = [];
+      for (let j = 0; j < n - 1; j++) {
+        for (let l = 0; l < parkingLats.length - 1; l++) {
+          const a = j * parkingLats.length + l;
+          const b = a + 1;
+          const c = a + parkingLats.length;
+          const d = c + 1;
+          if (dir > 0) ind.push(a, b, c, b, d, c);
+          else ind.push(a, c, b, b, c, d);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      g.setIndex(ind);
+      g.computeVertexNormals();
+      const park = new THREE.Mesh(g, C.parkingMat);
+      park.receiveShadow = true;
+      parent.add(park);
+
+      // Raised pavement top.
+      const topPos = new Float32Array(n * walkLats.length * 3);
+      const topUv = new Float32Array(n * walkLats.length * 2);
+      // Kerb face at the inner edge.
+      const curbPos = new Float32Array(n * 2 * 3);
+      const curbUv = new Float32Array(n * 2 * 2);
+      for (let j = 0; j < n; j++) {
+        const s = this.samples[i0 + j];
+        const base = s.pos.y + this.roadYOffset + this.roadCrown(dir * this.halfWidth);
+        for (let l = 0; l < walkLats.length; l++) {
+          const idx = j * walkLats.length + l;
+          const lat = dir * (this.halfWidth + walkLats[l]);
+          const x = s.pos.x + s.right.x * lat;
+          const z = s.pos.z + s.right.z * lat;
+          topPos[idx * 3] = x;
+          topPos[idx * 3 + 1] = base + 0.145;
+          topPos[idx * 3 + 2] = z;
+          topUv[idx * 2] = x * 0.2;
+          topUv[idx * 2 + 1] = z * 0.2;
+        }
+        const ci = j * 2;
+        const lat = dir * (this.halfWidth + walkLats[0]);
+        const x = s.pos.x + s.right.x * lat;
+        const z = s.pos.z + s.right.z * lat;
+        curbPos[ci * 3] = x;
+        curbPos[ci * 3 + 1] = base;
+        curbPos[ci * 3 + 2] = z;
+        curbPos[(ci + 1) * 3] = x;
+        curbPos[(ci + 1) * 3 + 1] = base + 0.145;
+        curbPos[(ci + 1) * 3 + 2] = z;
+        curbUv[ci * 2] = j * 0.35;
+        curbUv[ci * 2 + 1] = 0;
+        curbUv[(ci + 1) * 2] = j * 0.35;
+        curbUv[(ci + 1) * 2 + 1] = 0.16;
+      }
+      const topInd = [];
+      for (let j = 0; j < n - 1; j++) {
+        for (let l = 0; l < walkLats.length - 1; l++) {
+          const a = j * walkLats.length + l;
+          const b = a + 1;
+          const c = a + walkLats.length;
+          const d = c + 1;
+          if (dir > 0) topInd.push(a, b, c, b, d, c);
+          else topInd.push(a, c, b, b, c, d);
+        }
+      }
+      const topGeo = new THREE.BufferGeometry();
+      topGeo.setAttribute('position', new THREE.BufferAttribute(topPos, 3));
+      topGeo.setAttribute('uv', new THREE.BufferAttribute(topUv, 2));
+      topGeo.setIndex(topInd);
+      topGeo.computeVertexNormals();
+      const top = new THREE.Mesh(topGeo, C.sidewalkMat);
+      top.receiveShadow = true;
+      parent.add(top);
+
+      const curbInd = [];
+      for (let j = 0; j < n - 1; j++) {
+        const a = j * 2;
+        if (dir > 0) curbInd.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+        else curbInd.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+      const curbGeo = new THREE.BufferGeometry();
+      curbGeo.setAttribute('position', new THREE.BufferAttribute(curbPos, 3));
+      curbGeo.setAttribute('uv', new THREE.BufferAttribute(curbUv, 2));
+      curbGeo.setIndex(curbInd);
+      curbGeo.computeVertexNormals();
+      const curb = new THREE.Mesh(curbGeo, C.curbMat);
+      curb.receiveShadow = true;
+      parent.add(curb);
+    }
+  }
+
+  /** A merged block of buildings plus its kerbside furniture. */
+  _addCityBlock(parent, i0, i1, quality, owner = null) {
+    const C = this._cityAssets();
+    const rng = mulberry32(this.seed + i0 * 911 + i1 * 17 + 5);
+    const coreParts = { brick: [], office: [], concrete: [], glass: [], render: [] };
+    const storeParts = {};
+    const detailParts = [];
+    const detailBox = (w, h, d, x, y, z, ry, color) => {
+      const g = new THREE.BoxGeometry(w, h, d);
+      g.rotateY(ry);
+      g.translate(x, y, z);
+      detailParts.push({ geometry: g, color });
+    };
+    const buildingKinds = ['brick', 'render', 'concrete', 'office', 'glass'];
+    const storeKinds = Object.keys(C.storefronts);
+    const awningColors = C.awningColors;
+    const start = Math.max(4, i0 + 1);
+    const end = Math.min(this.n - 5, i1);
+    let i = start;
+    while (i < end) {
+      const s = this.samples[i];
+      const width = 15 + rng() * 13;
+      const advance = Math.max(1, Math.round(width / this.step));
+      for (const side of [-1, 1]) {
+        if (rng() < 0.10) continue;
+        if (this._cityPlaza && side === this._cityPlaza.side &&
+            i >= this._cityPlaza.i0 - 6 && i <= this._cityPlaza.i1 + 6) continue;
+        const depth = 12 + rng() * 11 + (rng() < 0.14 ? 7 : 0);
+        const kind = buildingKinds[Math.floor(rng() * buildingKinds.length)];
+        const tall = kind === 'office' || kind === 'glass';
+        const height = tall ? 22 + rng() * 38 : 8.5 + rng() * 20;
+        const setback = 0.45 + rng() * 1.8;
+        const centerLat = side * (this.halfWidth + 5.2 + depth / 2 + setback);
+        const cx = s.pos.x + s.right.x * centerLat;
+        const cz = s.pos.z + s.right.z * centerLat;
+        // Keep the building out of the road, side roads and earlier blocks.
+        let bad = false;
+        for (const along of [-width * 0.5, 0, width * 0.5]) {
+          const px = cx + s.tangent.x * along;
+          const pz = cz + s.tangent.z * along;
+          const near = this._nearestIndexFast(px, pz);
+          if (near.distance < this.halfWidth + 4.9) { bad = true; break; }
+          if (this.roadNetwork && this.roadNetwork.isNearRoad(px, pz, 5.2)) { bad = true; break; }
+          if (this._isExcluded(px, pz)) { bad = true; break; }
+        }
+        if (bad) continue;
+        const base = this.heightAtSample(i, centerLat) + 0.02;
+        this._markExclusion(cx, cz, Math.max(width, depth) * 0.62);
+        const storeH = 3.35;
+        const coreH = Math.max(4, height - storeH);
+        const coreGeo = new THREE.BoxGeometry(depth, coreH, width);
+        const uv = coreGeo.attributes.uv;
+        const uRep = Math.max(1, width / 8.5);
+        const vRep = Math.max(1, coreH / 3.4);
+        for (let k = 0; k < uv.count; k++) {
+          uv.setXY(k, uv.getX(k) * uRep, uv.getY(k) * vRep);
+        }
+        uv.needsUpdate = true;
+        coreGeo.rotateY(s.heading);
+        coreGeo.translate(cx, base + storeH + coreH * 0.5, cz);
+        coreParts[kind].push(coreGeo);
+        // Ground-floor shop / lobby.
+        const sfKind = storeKinds[Math.floor(rng() * storeKinds.length)];
+        const sfGeo = new THREE.BoxGeometry(depth + 0.28, storeH, width + 0.22);
+        sfGeo.rotateY(s.heading);
+        sfGeo.translate(cx, base + storeH * 0.5, cz);
+        (storeParts[sfKind] || (storeParts[sfKind] = [])).push(sfGeo);
+        // Cornice, parapet, rooftop plant and an awning over the pavement.
+        detailBox(depth + 0.5, 0.34, width + 0.4, cx, base + height + 0.1, cz,
+          s.heading, tall ? 0x50565a : 0x605b53);
+        detailBox(depth * 0.34, 0.85, width * 0.3,
+          cx + s.tangent.x * width * 0.16, base + height + 0.66,
+          cz + s.tangent.z * width * 0.16, s.heading, 0x555a5c);
+        if (rng() < 0.5) {
+          detailBox(0.06, 2.0, 0.06, cx - s.tangent.x * width * 0.3,
+            base + height + 1.25, cz - s.tangent.z * width * 0.3, s.heading, 0x727678);
+        }
+        const frontLat = -side * (depth * 0.5 + 0.55);
+        const frontX = cx + s.right.x * frontLat;
+        const frontZ = cz + s.right.z * frontLat;
+        const awn = awningColors[Math.floor(rng() * awningColors.length)];
+        detailBox(1.05, 0.11, width * 0.46, frontX, base + storeH - 0.22, frontZ,
+          s.heading, awn);
+        // Small projecting blade sign on some shops.
+        if (rng() < 0.55) {
+          const bx = frontX + s.right.x * (-side) * 0.45;
+          const bz = frontZ + s.right.z * (-side) * 0.45;
+          detailBox(0.08, 0.72, 1.35, bx, base + 4.65, bz, s.heading, awn);
+          detailBox(0.1, 0.06, 1.2, bx, base + 4.35, bz, s.heading, 0xf3e6c7);
+        }
+        // Collision: a line of circles across the shopfront.
+        const colR = Math.max(2.4, depth * 0.48);
+        const pieces = Math.max(1, Math.ceil(width / (colR * 1.45)));
+        for (let k = 0; k < pieces; k++) {
+          const along = pieces === 1 ? 0 : ((k / (pieces - 1)) - 0.5) * width * 0.88;
+          this._addCollider({
+            x: cx + s.tangent.x * along,
+            z: cz + s.tangent.z * along,
+            y: base,
+            r: colR,
+            type: 'building',
+            kind,
+            owner,
+          });
+        }
+      }
+      i += advance;
+    }
+    // bake the cores per facade material
+    for (const kind of Object.keys(coreParts)) {
+      const geos = coreParts[kind];
+      if (!geos.length) continue;
+      const merged = mergeGeometries(geos);
+      geos.forEach((g) => g.dispose());
+      const mesh = new THREE.Mesh(merged, C.facadeMaterials[kind]);
+      mesh.castShadow = quality === 'high';
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    }
+    for (const kind of Object.keys(storeParts)) {
+      const geos = storeParts[kind];
+      if (!geos.length) continue;
+      const merged = mergeGeometries(geos);
+      geos.forEach((g) => g.dispose());
+      const mesh = new THREE.Mesh(merged, C.storefronts[kind]);
+      mesh.castShadow = quality === 'high';
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    }
+    if (detailParts.length) {
+      const merged = mergeColored(detailParts);
+      detailParts.forEach((p) => p.geometry.dispose());
+      const mesh = new THREE.Mesh(merged, C.detailMat);
+      mesh.castShadow = quality === 'high';
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    }
+    this._addCityStreetFurniture(parent, i0, i1, quality, owner, rng);
+  }
+
+  _addCityStreetFurniture(parent, i0, i1, quality, owner, rng) {
+    const C = this._cityAssets();
+    const start = Math.max(8, i0 + 2);
+    const end = Math.min(this.n - 8, i1);
+    const lampItems = [];
+    const crossIdx = [];
+    const parkItems = [];
+    let sideToggle = rng() < 0.5 ? -1 : 1;
+    for (let i = start; i < end; i += 10) {
+      sideToggle *= -1;
+      const s = this.samples[i];
+      if (Math.abs(s.curvatureSmooth) > 0.045 && rng() < 0.5) continue;
+      const lat = sideToggle * (this.halfWidth + 3.85);
+      const y = s.pos.y + this.roadYOffset + this.roadCrown(sideToggle * this.halfWidth) + 0.145;
+      lampItems.push({
+        x: s.pos.x + s.right.x * lat,
+        y,
+        z: s.pos.z + s.right.z * lat,
+        rot: s.heading + (sideToggle > 0 ? 0 : Math.PI),
+      });
+    }
+    // Crossings every ~75 m, plus a few deliberate ones near the start.
+    for (let i = start + 14; i < end - 8; i += 46) {
+      const s = this.samples[i];
+      if (Math.abs(s.curvatureSmooth) > 0.03) continue;
+      if (this.roadNetwork && this.roadNetwork.isNearRoad(s.pos.x, s.pos.z, 7)) continue;
+      crossIdx.push(i);
+    }
+    // Street parking. Cars sit in the kerbside strip, not on the pavement.
+    let parkSide = rng() < 0.5 ? -1 : 1;
+    for (let i = start + 8; i < end - 10; i += 34) {
+      parkSide *= -1;
+      const s = this.samples[i];
+      if (Math.abs(s.curvatureSmooth) > 0.028) continue;
+      if (this.roadNetwork && this.roadNetwork.isNearRoad(s.pos.x, s.pos.z, 4.5)) continue;
+      const lat = parkSide * (this.halfWidth + 1.15);
+      const x = s.pos.x + s.right.x * lat;
+      const z = s.pos.z + s.right.z * lat;
+      const near = this._nearestIndexFast(x, z);
+      if (near.distance < this.halfWidth + 0.75) continue;
+      parkItems.push({
+        x,
+        y: s.pos.y + this.roadYOffset + 0.01,
+        z,
+        rot: s.heading + (rng() < 0.45 ? Math.PI : 0),
+        color: new THREE.Color([
+          0xb8b8b2, 0x2d3e51, 0x6c2827, 0x283a31, 0x8a806e, 0x3e4145, 0xd0cabb,
+        ][Math.floor(rng() * 7)]),
+      });
+    }
+    // Street lamps: pole and arm + glowing head.
+    if (lampItems.length) {
+      const poleParts = [];
+      const pole = new THREE.CylinderGeometry(0.07, 0.105, 6.4, 7);
+      pole.translate(0, 3.2, 0);
+      poleParts.push(pole);
+      const foot = new THREE.CylinderGeometry(0.17, 0.21, 0.32, 8);
+      foot.translate(0, 0.16, 0);
+      poleParts.push(foot);
+      const arm = new THREE.BoxGeometry(1.65, 0.075, 0.075);
+      arm.translate(0.82, 6.32, 0);
+      poleParts.push(arm);
+      const poleGeo = mergeGeometries(poleParts);
+      const headParts = [];
+      const head = new THREE.BoxGeometry(0.72, 0.11, 0.28);
+      head.translate(1.52, 6.27, 0);
+      headParts.push(head);
+      const lens = new THREE.BoxGeometry(0.55, 0.022, 0.2);
+      lens.translate(1.52, 6.205, 0);
+      headParts.push(lens);
+      const headGeo = mergeGeometries(headParts);
+      const poles = this._instanced(poleGeo, C.lampPoleMat, lampItems);
+      if (poles) {
+        poles.castShadow = quality === 'high';
+        parent.add(poles);
+      }
+      const heads = this._instanced(headGeo, C.lampHeadMat, lampItems);
+      if (heads) {
+        heads.castShadow = false;
+        parent.add(heads);
+      }
+    }
+    // Zebra crossings.
+    if (crossIdx.length) {
+      const bars = [];
+      for (const i of crossIdx) {
+        const s = this.samples[i];
+        for (let k = 0; k < 6; k++) {
+          const lat = -this.halfWidth + 0.95 + k * 1.34;
+          bars.push({
+            x: s.pos.x + s.right.x * lat,
+            y: s.pos.y + this.roadYOffset + this.roadCrown(lat) + 0.073,
+            z: s.pos.z + s.right.z * lat,
+            rot: s.heading,
+            sx: 0.52, sy: 1, sz: 1,
+          });
+        }
+      }
+      const barGeo = new THREE.BoxGeometry(1, 0.012, 2.7);
+      const barMesh = this._instanced(barGeo, C.crosswalkMat, bars);
+      if (barMesh) {
+        barMesh.castShadow = false;
+        parent.add(barMesh);
+      }
+    }
+    // Traffic lights at a few crossings.
+    const tlSpots = crossIdx.filter((_, k) => k % 3 === 1).slice(0, 4);
+    for (const i of tlSpots) {
+      const s = this.samples[i];
+      const side = rng() < 0.5 ? -1 : 1;
+      const lat = side * (this.halfWidth + 3.7);
+      const y = s.pos.y + this.roadYOffset + this.roadCrown(side * this.halfWidth) + 0.15;
+      const g = new THREE.Group();
+      g.position.set(s.pos.x + s.right.x * lat, y, s.pos.z + s.right.z * lat);
+      g.rotation.y = s.heading;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.4, 7), C.tlPoleMat);
+      pole.position.y = 1.7;
+      pole.castShadow = quality === 'high';
+      g.add(pole);
+      const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.88, 0.27), C.tlPoleMat);
+      boxMesh.position.y = 3.45;
+      boxMesh.castShadow = quality === 'high';
+      g.add(boxMesh);
+      for (const zSign of [-1, 1]) {
+        for (let k = 0; k < 3; k++) {
+          const col = k === 0 ? C.tlRed : k === 1 ? C.tlAmber : C.tlGreen;
+          const lens = new THREE.Mesh(new THREE.CircleGeometry(0.085, 12), col);
+          lens.position.set(0, 3.72 - k * 0.24, zSign * 0.139);
+          lens.rotation.y = zSign > 0 ? 0 : Math.PI;
+          g.add(lens);
+        }
+      }
+      parent.add(g);
+      this._addCollider({
+        x: g.position.x, z: g.position.z, y, r: 0.22,
+        type: 'traffic light', owner,
+      });
+    }
+    // Street-parked cars.
+    if (parkItems.length) {
+      const bodyParts = [];
+      const body = new THREE.BoxGeometry(1.76, 0.48, 4.05);
+      body.translate(0, 0.47, 0);
+      bodyParts.push(body);
+      const hood = new THREE.BoxGeometry(1.66, 0.13, 1.0);
+      hood.translate(0, 0.72, 1.44);
+      bodyParts.push(hood);
+      const cabin = new THREE.BoxGeometry(1.48, 0.4, 1.92);
+      cabin.translate(0, 0.9, -0.12);
+      bodyParts.push(cabin);
+      const bodyGeo = mergeGeometries(bodyParts);
+      const glassGeo = new THREE.BoxGeometry(1.49, 0.22, 1.87);
+      glassGeo.translate(0, 0.94, -0.12);
+      const wheelParts = [];
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          const wheel = new THREE.CylinderGeometry(0.3, 0.3, 0.19, 12);
+          wheel.rotateZ(Math.PI / 2);
+          wheel.translate(sx * 0.8, 0.3, sz * 1.33);
+          wheelParts.push(wheel);
+        }
+      }
+      const wheelGeo = mergeGeometries(wheelParts);
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.42, metalness: 0.28 });
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: 0x1c3039, roughness: 0.12, metalness: 0.55, clearcoat: 1,
+      });
+      const tyreMat = new THREE.MeshStandardMaterial({ color: 0x0d0f0f, roughness: 0.94 });
+      const bodies = this._instanced(bodyGeo, bodyMat, parkItems, (idx, item) => item.color);
+      if (bodies) {
+        bodies.castShadow = quality === 'high';
+        parent.add(bodies);
+      }
+      const glass = this._instanced(glassGeo, glassMat, parkItems);
+      if (glass) parent.add(glass);
+      const wheels = this._instanced(wheelGeo, tyreMat, parkItems);
+      if (wheels) {
+        wheels.castShadow = quality === 'high';
+        parent.add(wheels);
+      }
+      for (const p of parkItems) {
+        this._addCollider({
+          x: p.x, z: p.z, y: p.y, r: 1.2,
+          type: 'parked car', owner,
+        });
+      }
+    }
+    // Benches, litter bins and bollards on the pavement.
+    const benchItems = [];
+    const binItems = [];
+    for (let i = start + 20; i < end - 12; i += 38) {
+      const s = this.samples[i];
+      const side = rng() < 0.5 ? -1 : 1;
+      const lat = side * (this.halfWidth + 4.15);
+      const y = s.pos.y + this.roadYOffset + this.roadCrown(side * this.halfWidth) + 0.145;
+      if (rng() < 0.62) benchItems.push({
+        x: s.pos.x + s.right.x * lat, y, z: s.pos.z + s.right.z * lat,
+        rot: s.heading + (side > 0 ? Math.PI / 2 : -Math.PI / 2),
+      });
+      if (rng() < 0.68) binItems.push({
+        x: s.pos.x + s.right.x * (lat + side * 0.9), y,
+        z: s.pos.z + s.right.z * (lat + side * 0.9), rot: 0,
+      });
+    }
+    if (benchItems.length) {
+      const benchParts = [];
+      for (const z of [-0.62, 0.62]) {
+        const leg = new THREE.BoxGeometry(0.08, 0.4, 0.08);
+        leg.translate(0, 0.2, z);
+        benchParts.push(leg);
+      }
+      const seat = new THREE.BoxGeometry(0.52, 0.08, 1.55);
+      seat.translate(0, 0.43, 0);
+      benchParts.push(seat);
+      const back = new THREE.BoxGeometry(0.07, 0.48, 1.55);
+      back.translate(-0.22, 0.66, 0);
+      benchParts.push(back);
+      const benchGeo = mergeGeometries(benchParts);
+      const benches = this._instanced(benchGeo, C.benchMat, benchItems);
+      if (benches) {
+        benches.castShadow = quality === 'high';
+        parent.add(benches);
+      }
+    }
+    if (binItems.length) {
+      const binGeo = new THREE.CylinderGeometry(0.22, 0.25, 0.75, 10);
+      binGeo.translate(0, 0.38, 0);
+      const binMat = new THREE.MeshStandardMaterial({ color: 0x3e4445, roughness: 0.7, metalness: 0.25 });
+      const bins = this._instanced(binGeo, binMat, binItems);
+      if (bins) {
+        bins.castShadow = quality === 'high';
+        parent.add(bins);
+      }
+    }
+  }
+
+  _addCitySet(scene, quality) {
+    // Leave a gap for a small central plaza and clock tower.
+    const plazaIndex = this._findFeatureIndex(0.45, 45);
+    this._cityPlaza = {
+      i0: Math.max(12, plazaIndex - 20),
+      i1: Math.min(this.n - 12, plazaIndex + 20),
+      side: plazaIndex % 2 ? 1 : -1,
+    };
+    this._addCityBlock(scene, 0, this.n, quality, null);
+    this._addCityPlaza(scene, quality, plazaIndex, this._cityPlaza.side);
+    if (!this._treeAssets) this._treeAssets = this._makeTreeAssets();
+  }
+
+  _addCityPlaza(scene, quality, index, side) {
+    const C = this._cityAssets();
+    const s = this.samples[clamp(index, 12, this.n - 12)];
+    const baseLat = side * (this.halfWidth + 13.0);
+    const cx = s.pos.x + s.right.x * baseLat;
+    const cz = s.pos.z + s.right.z * baseLat;
+    const base = s.pos.y + this.roadYOffset + 0.16;
+    this._markExclusion(cx, cz, 19);
+    const plazaMat = C.sidewalkMat;
+    const plaza = new THREE.Mesh(new THREE.BoxGeometry(16.5, 0.18, 34), plazaMat);
+    plaza.position.set(cx, base, cz);
+    plaza.rotation.y = s.heading;
+    plaza.receiveShadow = true;
+    scene.add(plaza);
+    // Planter strips / low hedges at the edges
+    const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x384d2f, roughness: 0.96 });
+    for (const along of [-13, 13]) {
+      const hedge = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.55, 4.5), hedgeMat);
+      hedge.position.set(cx + s.tangent.x * along, base + 0.25, cz + s.tangent.z * along);
+      hedge.rotation.y = s.heading;
+      hedge.castShadow = quality === 'high';
+      scene.add(hedge);
+    }
+    // Central fountain
+    const fount = new THREE.Group();
+    fount.position.set(cx, base, cz);
+    fount.rotation.y = s.heading;
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.9, 0.55, 24), C.curbMat);
+    basin.position.y = 0.28;
+    basin.castShadow = quality === 'high';
+    basin.receiveShadow = true;
+    fount.add(basin);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.13, 8, 32), C.curbMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.56;
+    fount.add(rim);
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 0.03, 28), C.waterMat);
+    water.position.y = 0.53;
+    fount.add(water);
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.38, 2.2, 12), C.curbMat);
+    spire.position.y = 1.55;
+    fount.add(spire);
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.5, 0.22, 20), C.curbMat);
+    bowl.position.y = 2.25;
+    fount.add(bowl);
+    const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.9, 10), C.curbMat);
+    spout.position.y = 2.8;
+    fount.add(spout);
+    scene.add(fount);
+    // Benches around the fountain
+    for (const [along, lat, rot] of [[-5, 1.9, Math.PI / 2], [5, 1.9, -Math.PI / 2], [0, -5.4, 0]]) {
+      const bench = new THREE.Group();
+      bench.position.set(
+        cx + s.tangent.x * along + s.right.x * side * lat,
+        base,
+        cz + s.tangent.z * along + s.right.z * side * lat
+      );
+      bench.rotation.y = s.heading + rot;
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.12, 0.55), C.benchMat);
+      seat.position.y = 0.38;
+      bench.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 0.1), C.benchMat);
+      back.position.set(0, 0.67, -0.24);
+      back.rotation.x = -0.1;
+      bench.add(back);
+      for (const leg of [-0.72, 0.72]) {
+        const l = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.36, 0.42), C.tlPoleMat);
+        l.position.set(leg, 0.18, 0);
+        bench.add(l);
+      }
+      bench.castShadow = quality === 'high';
+      scene.add(bench);
+    }
+    // Clock tower landmark behind the plaza.
+    const towerLat = side * (this.halfWidth + 20.5);
+    const tx = s.pos.x + s.right.x * towerLat;
+    const tz = s.pos.z + s.right.z * towerLat;
+    const ty = this.heightAtSample(index, towerLat);
+    const towerMat = C.facadeMaterials.brick;
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xb7ad97, roughness: 0.85 });
+    const tower = new THREE.Group();
+    tower.position.set(tx, ty, tz);
+    tower.rotation.y = s.heading;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(7.4, 1.1, 7.4), stoneMat);
+    plinth.position.y = 0.55;
+    plinth.castShadow = quality === 'high';
+    tower.add(plinth);
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(5.4, 18, 5.4), stoneMat);
+    shaft.position.y = 10;
+    shaft.castShadow = quality === 'high';
+    shaft.receiveShadow = true;
+    tower.add(shaft);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.45, 6.5), stoneMat);
+    cap.position.y = 19.1;
+    tower.add(cap);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(3.7, 4.2, 4), new THREE.MeshStandardMaterial({ color: 0x3b4a4d, roughness: 0.55, metalness: 0.28 }));
+    roof.position.y = 21.4;
+    roof.rotation.y = Math.PI / 4;
+    roof.castShadow = quality === 'high';
+    tower.add(roof);
+    for (const face of [-1, 1]) {
+      const clock = new THREE.Mesh(new THREE.CircleGeometry(1.35, 24),
+        new THREE.MeshStandardMaterial({ color: 0xe9e1c8, emissive: 0xf0d49a, emissiveIntensity: 0.45, roughness: 0.6 }));
+      clock.position.set(0, 16.6, face * 2.715);
+      clock.rotation.y = face > 0 ? 0 : Math.PI;
+      tower.add(clock);
+      const handMat = new THREE.MeshBasicMaterial({ color: 0x2b2a25 });
+      const hour = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.8, 0.02), handMat);
+      hour.position.set(0, 16.85, face * 2.73);
+      hour.rotation.z = 0.6;
+      tower.add(hour);
+      const minute = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.15, 0.02), handMat);
+      minute.position.set(0, 16.9, face * 2.735);
+      minute.rotation.z = -1.9;
+      tower.add(minute);
+    }
+    scene.add(tower);
+    this._addCollider({
+      x: tx, z: tz, y: ty, r: 4.4, type: 'clock tower',
+    });
+  }
+
+  _addCityHorizon(scene) {
+    if (!this.bounds) return;
+    const { minX, maxX, minZ, maxZ } = this.bounds;
+    const cx = (minX + maxX) / 2;
+    const cz = (minZ + maxZ) / 2;
+    const diag = Math.hypot(maxX - minX, maxZ - minZ);
+    const radius = diag * 0.64 + 420;
+    const rng = mulberry32(this.seed + 613);
+    const parts = [];
+    const fog = new THREE.Color(this.env.fog);
+    const baseY = Math.min(...this.samples.map((s) => s.pos.y)) - 22;
+    for (let ring = 0; ring < 2; ring++) {
+      const count = ring === 0 ? 52 : 38;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rng() * 0.08;
+        const r = radius * (ring === 0 ? 0.78 : 1.05) * (0.85 + rng() * 0.3);
+        const w = 18 + rng() * 44;
+        const d = 16 + rng() * 36;
+        const h = 22 + Math.pow(rng(), 1.5) * (ring === 0 ? 90 : 150);
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(0, h * 0.5, 0);
+        g.rotateY(rng() * Math.PI * 2);
+        g.translate(cx + Math.cos(a) * r, baseY, cz + Math.sin(a) * r);
+        const col = new THREE.Color([0x5b646b, 0x6a6d6d, 0x4b555d, 0x706b62][i % 4]);
+        col.lerp(fog, ring === 0 ? 0.56 : 0.82);
+        parts.push({ geometry: g, color: col });
+      }
+    }
+    const geo = mergeColored(parts);
+    const mat = new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.55,
+      depthWrite: false, fog: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -8;
+    scene.add(mesh);
+  }
+
   _boardTexture(label, bg, fg) {
     const { canvas, ctx } = canvas2D(512, 168);
     ctx.fillStyle = bg;
@@ -4607,6 +5424,10 @@ export class Track {
   _addRidges(scene) {
     if (!this.bounds) return;
     const biome = this.stage.biome;
+    if (biome === 'city') {
+      this._addCityHorizon(scene);
+      return;
+    }
     const { minX, maxX, minZ, maxZ } = this.bounds;
     const cx = (minX + maxX) / 2;
     const cz = (minZ + maxZ) / 2;
@@ -4683,14 +5504,17 @@ export class Track {
     const spots = [this.startGateIndex + 8, this.finishGateIndex - 12,
       Math.floor(this.n * 0.26), Math.floor(this.n * 0.47), Math.floor(this.n * 0.7)];
     const people = [];
+    const city = this.stage.biome === 'city';
     for (const idx of spots) {
       for (const side of [-1, 1]) {
         if (rng() < 0.35) continue;
         const s = this.samples[clamp(Math.round(idx + (rng() - 0.5) * 12), 0, this.n - 1)];
         const count = 2 + Math.floor(rng() * 4);
         for (let k = 0; k < count; k++) {
-          const lat = side * (this.halfWidth + 8.1 + rng() * 4.2);
-          const latOffset = lat + (rng() - 0.5) * 2;
+          const lat = city
+            ? side * (this.halfWidth + 3.2 + rng() * 1.6)
+            : side * (this.halfWidth + 8.1 + rng() * 4.2);
+          const latOffset = lat + (rng() - 0.5) * (city ? 0.8 : 2);
           const along = (rng() - 0.5) * 8;
           const x = s.pos.x + s.right.x * latOffset + s.tangent.x * along;
           const z = s.pos.z + s.right.z * latOffset + s.tangent.z * along;
@@ -5500,7 +6324,8 @@ export class Track {
     roadMat.metalness = 0.02 + wet * 0.26;
     const shoulderSource = this.stage.biome === 'snow' ? makeRoadTexture('snow')
       : this.stage.biome === 'safari' ? makeRoadTexture('dirt')
-        : makeRoadTexture('gravel');
+        : this.stage.biome === 'city' ? makeRoadTexture('tarmac')
+          : makeRoadTexture('gravel');
     const shoulderMat = new THREE.MeshStandardMaterial({
       map: shoulderSource.map,
       bumpMap: shoulderSource.bump,
@@ -5508,7 +6333,9 @@ export class Track {
       roughness: this.stage.biome === 'snow' ? 0.92 : 0.98,
       color: this.stage.biome === 'snow'
         ? new THREE.Color(0xe3edf6)
-        : new THREE.Color(this.env.dirt).lerp(new THREE.Color(0xffffff), 0.55),
+        : this.stage.biome === 'city'
+          ? new THREE.Color(0x8f8c83)
+          : new THREE.Color(this.env.dirt).lerp(new THREE.Color(0xffffff), 0.55),
     });
     const puddleMat = wet >= 0.25 ? new THREE.MeshBasicMaterial({
       color: new THREE.Color(this.env.skyHorizon).lerp(new THREE.Color(0xffffff), 0.28),
@@ -5546,6 +6373,32 @@ export class Track {
 
   _buildEndlessSkyRidges(skyGroup) {
     const rng = mulberry32(this.seed + 90210);
+    if (this.stage.biome === 'city') {
+      const parts = [];
+      const count = 58;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + rng() * 0.09;
+        const r = 840 + rng() * 420;
+        const h = 32 + Math.pow(rng(), 1.5) * 170 + Math.sin(i * 1.7) * 18;
+        const w = 24 + rng() * 70;
+        const d = 22 + rng() * 58;
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(0, h / 2, 0);
+        g.rotateY(rng() * Math.PI * 2);
+        g.translate(Math.cos(a) * r, -34, Math.sin(a) * r);
+        parts.push(g);
+      }
+      const geo = mergeGeometries(parts);
+      const col = new THREE.Color(this.env.hill).lerp(new THREE.Color(this.env.fog), 0.56);
+      const mat = new THREE.MeshBasicMaterial({
+        color: col, fog: false, transparent: true, opacity: 0.44, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = -8;
+      skyGroup.add(mesh);
+      return;
+    }
     const parts = [];
     const count = 42;
     for (let i = 0; i < count; i++) {
@@ -5927,13 +6780,16 @@ export class Track {
       dirt: new THREE.Color(this.env.dirt || 0x8a7c5e).lerp(white, 0.62),
       dark: this.stage.biome === 'snow'
         ? new THREE.Color(0xccd8e6)
-        : new THREE.Color(0xd2d6c4),
+        : this.stage.biome === 'city'
+          ? new THREE.Color(0xa8a49a)
+          : new THREE.Color(0xd2d6c4),
       rock: new THREE.Color(this.env.rock || 0x6e7064).lerp(white, 0.48),
       moss: new THREE.Color(this.env.moss || this.env.treeAlt || 0x6b7f3a).lerp(white, 0.5),
       snowShade: new THREE.Color(0xc7d8e8),
       nearRoadEdge: this.halfWidth + (this.env.terrain?.edge || 6),
       mountain: this.env.terrain?.style === 'mountain',
       snow: this.stage.biome === 'snow',
+      city: this.stage.biome === 'city',
       tmpC: new THREE.Color(),
     };
   }
@@ -5973,9 +6829,9 @@ export class Track {
         );
         tmpC.lerp(state.rock, rockMix);
         const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82,
-          fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * 0.34;
+          fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * (state.city ? 0.1 : 0.34);
         tmpC.lerp(state.moss, mossMix);
-        tmpC.lerp(state.dirt, nearRoad * 0.4);
+        tmpC.lerp(state.dirt, nearRoad * (state.city ? 0.22 : 0.4));
         if (state.snow) {
           tmpC.lerp(state.snowShade, smoothstep(0.1, 3.0, Math.abs(rel)) * 0.2 + nearRoad * 0.1);
         }
@@ -6087,10 +6943,14 @@ export class Track {
     const trees = {};
     for (const key of keys) trees[key] = [];
     const density = prof.density || 1;
-    const attempts = Math.round((size * size) / 150 * density);
+    const city = this.stage.biome === 'city';
+    const attempts = Math.round((size * size) / 150 * density * (city ? 0.38 : 1));
     // Road chunks plant their own dense verge. Tile scenery starts outside
-    // that band so the same tree is never generated twice.
-    const roadClear = Math.max(96, this.halfWidth + (prof.edge || 6.5) + 72);
+    // that band so the same tree is never generated twice. City tiles stay
+    // much closer to the road so the blocks do not read as empty parkland.
+    const roadClear = city
+      ? Math.max(16, this.halfWidth + (prof.edge || 6.5) + 10)
+      : Math.max(96, this.halfWidth + (prof.edge || 6.5) + 72);
     const x0 = tile.cx * size;
     const z0 = tile.cz * size;
     for (let i = 0; i < attempts; i++) {
@@ -6118,8 +6978,9 @@ export class Track {
       if (items.length) this._addTreeSet(tile.group, items, type, rng, q, tile.group);
     }
     // Scattered boulders stop the open ground reading as an empty plane.
+    // City blocks have kerbs, planters and buildings instead.
     const rocks = [];
-    const rockAttempts = Math.round(size / 22 * density);
+    const rockAttempts = city ? 0 : Math.round(size / 22 * density);
     for (let i = 0; i < rockAttempts; i++) {
       const x = x0 + 6 + rng() * (size - 12);
       const z = z0 + 6 + rng() * (size - 12);
@@ -6234,6 +7095,9 @@ export class Track {
       const m = new THREE.Mesh(g, A.shoulderMat);
       m.receiveShadow = true;
       group.add(m);
+    }
+    if (this.stage.biome === 'city') {
+      this._addCitySidewalks(group, i0, i1);
     }
 
     // snow banks
@@ -6382,6 +7246,10 @@ export class Track {
 
   _addChunkProps(group, i0, i1) {
     const q = this._endlessQuality;
+    if (this.stage.biome === 'city') {
+      this._addCityBlock(group, i0, i1, q, group);
+      return;
+    }
     const P = this._postAssets;
     if (!P) return;
     const stride = q === 'high' ? 8 : 11;

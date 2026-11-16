@@ -451,7 +451,8 @@ export function makeGroundTexture(biome) {
       : biome === 'jungle' ? 444
         : biome === 'japan' ? 1201
           : biome === 'russia' ? 1707
-            : biome === 'safari' ? 2203 : 808
+            : biome === 'safari' ? 2203
+              : biome === 'city' ? 2609 : 808
   );
   const { canvas, ctx } = canvas2D(512, 512);
   if (biome === 'snow') {
@@ -630,6 +631,55 @@ export function makeGroundTexture(biome) {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  } else if (biome === 'city') {
+    noiseFill(ctx, 512, 512, [[119, 117, 109], [108, 106, 99], [131, 128, 120], [96, 96, 91], [144, 139, 129]], rng);
+    // concrete slabs, repairs and old asphalt patches
+    for (let i = 0; i < 38; i++) {
+      ctx.globalAlpha = 0.05 + rng() * 0.12;
+      ctx.fillStyle = rng() > 0.55 ? '#b7b1a4' : rng() > 0.4 ? '#4d4e4b' : '#8b857a';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 20 + rng() * 100, 12 + rng() * 60, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    speckles(ctx, 512, 512, 7800, rng, ['#8f8c83', '#55564f', '#b8b2a4', '#70716a', '#d0cabb'], 0.4, 2.2);
+    // expansion joints / paving seams
+    ctx.strokeStyle = 'rgba(50,51,48,.32)';
+    ctx.lineWidth = 2;
+    for (let x = 0; x < 512; x += 128) {
+      ctx.beginPath(); ctx.moveTo(x + (rng() - 0.5) * 4, 0); ctx.lineTo(x + (rng() - 0.5) * 4, 512); ctx.stroke();
+    }
+    for (let y = 0; y < 512; y += 128) {
+      ctx.beginPath(); ctx.moveTo(0, y + (rng() - 0.5) * 4); ctx.lineTo(512, y + (rng() - 0.5) * 4); ctx.stroke();
+    }
+    // gum, drain covers and small cracks
+    for (let i = 0; i < 42; i++) {
+      ctx.globalAlpha = 0.16 + rng() * 0.28;
+      ctx.fillStyle = '#2e302e';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 1 + rng() * 4, 0.7 + rng() * 2.4, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 10; i++) {
+      const x = rng() * 512, y = rng() * 512, r = 6 + rng() * 10;
+      ctx.fillStyle = '#4b4c48';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#666762'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+      for (let k = -2; k <= 2; k++) {
+        ctx.beginPath(); ctx.moveTo(x + k * 3, y - r * 0.7); ctx.lineTo(x + k * 3, y + r * 0.7); ctx.stroke();
+      }
+    }
+    // damp patches from the city air
+    for (let i = 0; i < 14; i++) {
+      ctx.globalAlpha = 0.04 + rng() * 0.07;
+      ctx.fillStyle = '#c5d5d9';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 12 + rng() * 60, 8 + rng() * 30, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   } else if (biome === 'coast') {
     noiseFill(ctx, 512, 512, [[113, 108, 61], [98, 94, 53], [132, 124, 72], [88, 84, 48]], rng);
     for (let i = 0; i < 46; i++) {
@@ -787,13 +837,14 @@ export function makeGroundBumpTexture(biome) {
       : biome === 'jungle' ? 402
         : biome === 'japan' ? 403
           : biome === 'russia' ? 404
-            : biome === 'safari' ? 405 : 406
+            : biome === 'safari' ? 405
+              : biome === 'city' ? 407 : 406
   );
   const { canvas, ctx } = canvas2D(512, 512);
   const img = ctx.createImageData(512, 512);
   const d = img.data;
-  const amp = biome === 'snow' ? 30 : biome === 'safari' ? 55 : 48;
-  const base = biome === 'snow' ? 170 : 128;
+  const amp = biome === 'snow' ? 30 : biome === 'safari' ? 55 : biome === 'city' ? 20 : 48;
+  const base = biome === 'snow' ? 170 : biome === 'city' ? 140 : 128;
   for (let i = 0; i < d.length; i += 4) {
     const v = clamp(base + (rng() - 0.5) * amp, 0, 255);
     d[i] = d[i + 1] = d[i + 2] = v;
@@ -1841,4 +1892,179 @@ export function makeGrassTexture() {
 export function makeCrowdShirt(i) {
   const colors = [0xd84a2a, 0x2f5fa8, 0xe0b52b, 0x3c7a3c, 0xcfcfc4, 0xa83242, 0x3c3c44];
   return colors[i % colors.length];
+}
+
+/* ============================================================
+   CITY ARCHITECTURE
+   Procedural facade / shopfront sheets for the city stage. Each
+   facade has a matching emissive map so lit windows survive dusk.
+   ============================================================ */
+export function makeCityFacadeTexture(kind = 'brick') {
+  const seeds = { brick: 3607, office: 3611, concrete: 3613, glass: 3617, render: 3619 };
+  const palettes = {
+    brick: { base: '#6c4a3e', dark: '#50362d', light: '#8f6a55', frame: '#d7d0c1', glass: '#1a2428', lit: '#e7b56f', band: '#5c3f35' },
+    office: { base: '#344650', dark: '#24343d', light: '#4f6470', frame: '#8b9aa0', glass: '#16252d', lit: '#d5e8f2', band: '#2b3b44' },
+    concrete: { base: '#77746b', dark: '#5b5952', light: '#989288', frame: '#c4beb0', glass: '#1c2327', lit: '#ffcc8e', band: '#67645d' },
+    glass: { base: '#2f4552', dark: '#213440', light: '#4f6876', frame: '#a8b6ba', glass: '#13232d', lit: '#cfe9f5', band: '#263b47' },
+    render: { base: '#a3917d', dark: '#83725f', light: '#c1ad95', frame: '#d9d2c3', glass: '#20282a', lit: '#ffc387', band: '#8c7b68' },
+  };
+  const pal = palettes[kind] || palettes.brick;
+  const rng = mulberry32(seeds[kind] || 3607);
+  const W = 512, H = 1024;
+  const { canvas, ctx } = canvas2D(W, H);
+  const em = canvas2D(W, H);
+  ctx.fillStyle = pal.base; ctx.fillRect(0, 0, W, H);
+  em.ctx.fillStyle = '#000'; em.ctx.fillRect(0, 0, W, H);
+  // masonry / panel noise
+  for (let i = 0; i < 4200; i++) {
+    ctx.globalAlpha = 0.03 + rng() * 0.09;
+    ctx.fillStyle = rng() > 0.5 ? pal.light : pal.dark;
+    const s = 1 + rng() * 7;
+    ctx.fillRect(rng() * W, rng() * H, s, s * (0.5 + rng()));
+  }
+  ctx.globalAlpha = 1;
+  const cols = kind === 'glass' ? 5 : kind === 'office' ? 7 : 6;
+  const rows = kind === 'glass' ? 13 : 10;
+  const marginX = 26, marginY = 22;
+  const cellW = (W - marginX * 2) / cols;
+  const cellH = (H - marginY * 2) / rows;
+  // horizontal floor bands
+  for (let r = 0; r < rows; r++) {
+    const y = marginY + r * cellH;
+    ctx.fillStyle = pal.band;
+    ctx.globalAlpha = 0.42;
+    ctx.fillRect(0, y + cellH - 5, W, 4);
+    ctx.globalAlpha = 1;
+  }
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const wx = marginX + c * cellW + cellW * 0.14;
+      const wy = marginY + r * cellH + cellH * 0.15;
+      const ww = cellW * 0.72;
+      const wh = cellH * 0.62;
+      // recess / frame
+      ctx.fillStyle = pal.frame;
+      ctx.globalAlpha = kind === 'glass' ? 0.35 : 0.7;
+      ctx.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+      ctx.globalAlpha = 1;
+      // glass
+      const grad = ctx.createLinearGradient(wx, wy, wx, wy + wh);
+      grad.addColorStop(0, pal.glass);
+      grad.addColorStop(0.55, kind === 'office' || kind === 'glass' ? '#263a46' : '#263134');
+      grad.addColorStop(1, '#0f171b');
+      ctx.fillStyle = grad;
+      ctx.fillRect(wx, wy, ww, wh);
+      // mullions
+      ctx.strokeStyle = pal.frame;
+      ctx.globalAlpha = 0.6;
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(wx + ww * 0.5, wy); ctx.lineTo(wx + ww * 0.5, wy + wh);
+      if (kind !== 'glass') { ctx.moveTo(wx, wy + wh * 0.52); ctx.lineTo(wx + ww, wy + wh * 0.52); }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      // curtains / blinds silhouette
+      if (rng() < 0.38) {
+        ctx.globalAlpha = 0.42;
+        ctx.fillStyle = rng() > 0.5 ? '#c6b89f' : '#6b5e4c';
+        ctx.fillRect(wx, wy, ww, wh * (0.15 + rng() * 0.45));
+        ctx.globalAlpha = 1;
+      }
+      // lit windows, sparse for dusk
+      if (rng() < 0.27) {
+        const warm = kind === 'office' || kind === 'glass' ? '#d8ecf6' : pal.lit;
+        em.ctx.globalAlpha = 0.55 + rng() * 0.45;
+        em.ctx.fillStyle = warm;
+        em.ctx.fillRect(wx + 1, wy + 1, ww - 2, wh - 2);
+        em.ctx.globalAlpha = 0.25;
+        em.ctx.fillStyle = '#000';
+        em.ctx.fillRect(wx, wy + wh * 0.52, ww, 2);
+        em.ctx.globalAlpha = 1;
+        // warm silhouette inside
+        if (rng() < 0.36) {
+          em.ctx.fillStyle = 'rgba(12,15,16,.75)';
+          em.ctx.fillRect(wx + ww * (0.2 + rng() * 0.3), wy + wh * 0.25, ww * 0.2, wh * 0.5);
+        }
+      }
+    }
+  }
+  // vertical pilasters / seams
+  for (let c = 0; c <= cols; c += 2) {
+    const x = marginX + c * cellW;
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = pal.dark;
+    ctx.fillRect(x - 5, 0, 7, H);
+    ctx.globalAlpha = 1;
+  }
+  // rooftop parapet strip at the texture top
+  ctx.fillStyle = pal.dark; ctx.fillRect(0, 0, W, 16);
+  ctx.fillStyle = pal.light; ctx.globalAlpha = 0.35; ctx.fillRect(0, 16, W, 4); ctx.globalAlpha = 1;
+  const map = makeCanvasTexture(canvas, { repeat: true, anisotropy: 8 });
+  const emissive = makeCanvasTexture(em.canvas, { repeat: true, anisotropy: 8 });
+  return { map, emissive, roughness: kind === 'glass' ? 0.42 : 0.82 };
+}
+
+export function makeCityStorefrontTexture(kind = 'cafe') {
+  const signs = {
+    cafe: ['CAFE  MERIDIAN', '#241c16', '#f0c46a'],
+    market: ['MARKET', '#1c2a24', '#e8e4d2'],
+    hotel: ['HOTEL', '#241f2b', '#e2c48c'],
+    pharmacy: ['PHARMACY', '#17302a', '#c8f0d8'],
+    ramen: ['RAMEN', '#2a1717', '#f2c96a'],
+    books: ['BOOKS', '#211c27', '#d9c69c'],
+    bar: ['BAR', '#1d1b25', '#e0a86a'],
+    bakery: ['BAKERY', '#2a2118', '#f0d090'],
+    cinema: ['CINEMA', '#26151b', '#ffb35c'],
+    garage: ['GARAGE', '#1b2227', '#d5e5e9'],
+    vinyl: ['VINYL', '#21182a', '#e0a8d6'],
+    florist: ['FLORIST', '#1d2a1e', '#e8e0b0'],
+  };
+  const [label, bg, fg] = signs[kind] || signs.cafe;
+  const rng = mulberry32(7000 + kind.length * 31 + kind.charCodeAt(0));
+  const { canvas, ctx } = canvas2D(1024, 512);
+  const em = canvas2D(1024, 512);
+  ctx.fillStyle = '#2b2b2a'; ctx.fillRect(0, 0, 1024, 512);
+  em.ctx.fillStyle = '#000'; em.ctx.fillRect(0, 0, 1024, 512);
+  // ground floor band
+  ctx.fillStyle = '#343432'; ctx.fillRect(0, 40, 1024, 430);
+  // shop windows
+  for (let i = 0; i < 3; i++) {
+    const x = 42 + i * 322;
+    const grad = ctx.createLinearGradient(x, 110, x, 450);
+    grad.addColorStop(0, '#1b2527'); grad.addColorStop(0.5, '#273b3d'); grad.addColorStop(1, '#131b1d');
+    ctx.fillStyle = grad; ctx.fillRect(x, 118, 288, 330);
+    em.ctx.fillStyle = i === 1 ? '#d7b06e' : '#b2935a';
+    em.ctx.globalAlpha = 0.48;
+    em.ctx.fillRect(x + 6, 126, 276, 312);
+    em.ctx.globalAlpha = 1;
+    // interior silhouettes
+    em.ctx.fillStyle = 'rgba(15,18,17,.76)';
+    for (let k = 0; k < 4; k++) {
+      em.ctx.fillRect(x + 22 + k * 64, 300 + rng() * 80, 24 + rng() * 26, 60 + rng() * 40);
+    }
+    // frames
+    ctx.strokeStyle = '#8a8578'; ctx.lineWidth = 8;
+    ctx.strokeRect(x, 118, 288, 330);
+    ctx.beginPath(); ctx.moveTo(x + 144, 118); ctx.lineTo(x + 144, 448); ctx.stroke();
+    // door
+    ctx.fillStyle = '#1a1f20'; ctx.fillRect(x + 114, 300, 60, 148);
+    ctx.strokeStyle = '#9a9486'; ctx.lineWidth = 4; ctx.strokeRect(x + 114, 300, 60, 148);
+  }
+  // sign band with the shop name
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, 1024, 112);
+  ctx.fillStyle = fg; ctx.font = '700 58px "Barlow Condensed", sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, 512, 58);
+  em.ctx.fillStyle = fg; em.ctx.globalAlpha = 0.9;
+  em.ctx.font = '700 58px "Barlow Condensed", sans-serif';
+  em.ctx.textAlign = 'center'; em.ctx.textBaseline = 'middle';
+  em.ctx.fillText(label, 512, 58);
+  em.ctx.globalAlpha = 1;
+  ctx.strokeStyle = fg; ctx.lineWidth = 4; ctx.strokeRect(12, 12, 1000, 88);
+  em.ctx.strokeStyle = fg; em.ctx.lineWidth = 4; em.ctx.strokeRect(12, 12, 1000, 88);
+  // pavement base shadow
+  ctx.fillStyle = '#3e3d38'; ctx.fillRect(0, 470, 1024, 42);
+  const map = makeCanvasTexture(canvas, { repeat: true, anisotropy: 8 });
+  const emissive = makeCanvasTexture(em.canvas, { repeat: true, anisotropy: 8 });
+  return { map, emissive };
 }

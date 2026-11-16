@@ -740,9 +740,11 @@ export class Game {
     const p = this.physics;
     const speed = p.speedKph;
     const rough = p.info && p.info.offRoad ? 1 : 0;
+    const comfort = this.car?.handling?.comfort || 0;
     const bump = this.settings.shake
-      ? Math.sin(p.odometer * 6.1) * 0.0045 * clamp(speed / 90, 0, 1) +
-        Math.sin(p.odometer * 13.7) * 0.0015 * clamp(speed / 140, 0, 1) * (1 + rough * 2)
+      ? (Math.sin(p.odometer * 6.1) * 0.0045 * clamp(speed / 90, 0, 1) +
+        Math.sin(p.odometer * 13.7) * 0.0015 * clamp(speed / 140, 0, 1) * (1 + rough * 2)) *
+        (1 - comfort * 0.62)
       : 0;
     this.carRoot.position.set(p.pos.x, p.pos.y + bump, p.pos.z);
     this.carRoot.rotation.order = 'YXZ';
@@ -838,7 +840,9 @@ export class Game {
     const p = this.physics;
     const rough = p?.info?.offRoad ? 1.8 : 0;
     const factor = mode === 'cockpit' ? 1 : mode === 'bonnet' ? 1.25 : mode === 'bumper' ? 1.4 : 0.75;
-    const amp = (0.0011 + speedRatio * 0.0022 + rough * 0.0045 + this.shakeImpulse * 0.017) * factor;
+    const comfort = this.car?.handling?.comfort || 0;
+    const amp = (0.0011 + speedRatio * 0.0022 + rough * 0.0045 + this.shakeImpulse * 0.017) *
+      factor * (1 - comfort * 0.58);
     return { amp, t: performance.now() / 1000 };
   }
 

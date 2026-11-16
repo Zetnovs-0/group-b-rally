@@ -22,6 +22,8 @@ const TIPS = [
   'Tip: The map and timer are mounted in the car. Look down, not at a floating HUD.',
   'Tip: ENDLESS mode keeps generating road ahead. Your furthest distance is your record.',
   'Tip: Heavier cars carry momentum. Brake earlier, and let the weight work for you.',
+  'Tip: Modern city cars have ABS and stability control. Stamp on the brakes, the car will stay straight.',
+  'Tip: The new city cars are set up for comfort and control, not opposite lock. Smooth is quick.',
 ];
 
 export class UI {
@@ -128,6 +130,7 @@ export class UI {
      SVG ART
      ============================================================ */
   _carSVG(car) {
+    if (car.interior === 'modern') return this._modernCarSVG(car);
     const body = hex(car.color);
     const accent = hex(car.accent);
     const accent2 = hex(car.accent2);
@@ -170,7 +173,112 @@ export class UI {
       </svg>`;
   }
 
+
+  _modernCarSVG(car) {
+    const body = hex(car.color);
+    const accent = hex(car.accent);
+    const accent2 = hex(car.accent2);
+    const dark = '#14181b';
+    const windowC = '#18272d';
+    const suv = car.style?.body === 'suv';
+    const roofY = suv ? 6 : 10;
+    const beltY = suv ? 19 : 20;
+    const seatY = suv ? 33 : 32;
+    return `
+      <svg viewBox="0 0 120 46" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="car-${car.id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="${body}" stop-opacity=".98"/>
+            <stop offset=".62" stop-color="${body}" stop-opacity=".8"/>
+            <stop offset="1" stop-color="${body}" stop-opacity=".55"/>
+          </linearGradient>
+          <linearGradient id="glass-${car.id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#35515f"/><stop offset="1" stop-color="${windowC}"/>
+          </linearGradient>
+        </defs>
+        <ellipse cx="61" cy="41.5" rx="50" ry="2.4" fill="#000" opacity=".34"/>
+        <path d="M7 33 Q7 24 18 22 L35 20 L46 ${roofY + 1} Q49 ${roofY - 1} 55 ${roofY - 1}
+          L79 ${roofY - 1} Q86 ${roofY + 1} 92 20 L104 21 Q113 23 113 30 L113 34 Q113 36 110 36
+          L10 36 Q7 36 7 33 Z" fill="url(#car-${car.id})" stroke="rgba(255,255,255,.2)" stroke-width=".6"/>
+        <path d="M47 ${roofY + 2} L53 ${roofY + 1} L77 ${roofY + 1} L84 20 L93 20 L92 ${beltY}
+          L45 ${beltY} Z" fill="url(#glass-${car.id})" opacity=".95"/>
+        <path d="M56 ${roofY + 1.4} L56 ${beltY - 1}" stroke="${dark}" stroke-width="2"/>
+        <path d="M84 ${roofY + 1.2} L80 ${beltY - 1}" stroke="${dark}" stroke-width="1.7"/>
+        <path d="M8 27 L18 25 L31 25 L31 26 L8 28 Z" fill="${dark}" opacity=".72"/>
+        <path d="M12 24.4 L22 23.3 L22 24.3 L12 25.3 Z" fill="#e7f2fa" opacity=".92"/>
+        <path d="M108 25.6 L112.6 26.8 L112.6 28.6 L107 27.4 Z" fill="#a61c1c" opacity=".9"/>
+        <rect x="18" y="33" width="25" height="1.1" fill="${accent}" opacity=".65"/>
+        <rect x="68" y="22.6" width="10" height=".9" fill="${accent}" opacity=".65"/>
+        <path d="M96 23 L103 23" stroke="${accent}" stroke-width="1" opacity=".8"/>
+        <path d="M87 27 L103 27" stroke="#0b0e10" stroke-width="1" opacity=".66"/>
+        <g>
+          <circle cx="29" cy="34" r="8.2" fill="#0b0d0d"/>
+          <circle cx="29" cy="34" r="5" fill="${accent2}" opacity=".9"/>
+          <circle cx="29" cy="34" r="2.1" fill="#d6d8d3"/>
+          <circle cx="94" cy="34" r="8.2" fill="#0b0d0d"/>
+          <circle cx="94" cy="34" r="5" fill="${accent2}" opacity=".9"/>
+          <circle cx="94" cy="34" r="2.1" fill="#d6d8d3"/>
+        </g>
+        <path d="M16 22 Q22 20 30 20 L35 20" stroke="#d6d8d3" stroke-width=".7" fill="none" opacity=".55"/>
+        <path d="M88 20 L96 20" stroke="#d6d8d3" stroke-width=".7" fill="none" opacity=".5"/>
+      </svg>`;
+  }
+
   _biomeArt(biome, stageId) {
+    if (biome === 'city') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#2f4d68"/><stop offset=".6" stop-color="#b88f79"/><stop offset="1" stop-color="#e1b486"/>
+          </linearGradient>
+          <linearGradient id="glass-${stageId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#263d4d"/><stop offset="1" stop-color="#14232e"/>
+          </linearGradient>
+        </defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="318" cy="20" r="11" fill="#ffe0ae" opacity=".55"/>
+        <g fill="#42525d" opacity=".72">
+          <rect x="0" y="39" width="30" height="51"/><rect x="34" y="28" width="28" height="62"/>
+          <rect x="66" y="45" width="24" height="45"/><rect x="96" y="18" width="34" height="72"/>
+          <rect x="136" y="36" width="26" height="54"/><rect x="166" y="24" width="38" height="66"/>
+          <rect x="210" y="43" width="27" height="47"/><rect x="242" y="30" width="32" height="60"/>
+          <rect x="280" y="14" width="38" height="76"/><rect x="324" y="38" width="28" height="52"/>
+          <rect x="356" y="26" width="44" height="64"/>
+        </g>
+        <g fill="url(#glass-${stageId})" opacity=".86">
+          <rect x="4" y="44" width="22" height="40"/><rect x="38" y="33" width="20" height="53"/>
+          <rect x="70" y="50" width="16" height="36"/><rect x="101" y="23" width="24" height="61"/>
+          <rect x="140" y="41" width="18" height="43"/><rect x="171" y="29" width="28" height="55"/>
+          <rect x="214" y="48" width="19" height="36"/><rect x="247" y="35" width="22" height="49"/>
+          <rect x="285" y="19" width="28" height="65"/><rect x="329" y="43" width="18" height="41"/>
+          <rect x="361" y="31" width="34" height="53"/>
+        </g>
+        <g fill="#f0c57e" opacity=".7">
+          <rect x="8" y="55" width="4" height="5"/><rect x="17" y="65" width="4" height="5"/>
+          <rect x="42" y="48" width="4" height="5"/><rect x="51" y="66" width="4" height="5"/>
+          <rect x="108" y="38" width="4" height="5"/><rect x="115" y="58" width="4" height="5"/>
+          <rect x="179" y="48" width="4" height="5"/><rect x="189" y="64" width="4" height="5"/>
+          <rect x="253" y="55" width="4" height="5"/><rect x="260" y="69" width="4" height="5"/>
+          <rect x="295" y="38" width="5" height="6"/><rect x="304" y="55" width="5" height="6"/><rect x="298" y="70" width="5" height="6"/>
+          <rect x="372" y="47" width="5" height="6"/><rect x="382" y="64" width="5" height="6"/>
+        </g>
+        <rect x="0" y="77" width="400" height="13" fill="#383e42"/>
+        <path d="M0 82 L400 82" stroke="#e9e3cf" stroke-width="1.6" stroke-dasharray="22 16" opacity=".55"/>
+        <g fill="#1d2327">
+          <rect x="28" y="72" width="12" height="18"/><rect x="120" y="70" width="12" height="20"/>
+          <rect x="232" y="72" width="12" height="18"/><rect x="342" y="70" width="12" height="20"/>
+        </g>
+        <g fill="#e9c25a" opacity=".55">
+          <rect x="28" y="77" width="12" height="2"/><rect x="120" y="75" width="12" height="2"/>
+          <rect x="232" y="77" width="12" height="2"/><rect x="342" y="75" width="12" height="2"/>
+        </g>
+        <rect x="288" y="84" width="34" height="2" fill="#f0ead8" opacity=".55"/>
+        <rect x="294" y="87" width="4" height="2.4" fill="#f0ead8" opacity=".55"/>
+        <rect x="304" y="87" width="4" height="2.4" fill="#f0ead8" opacity=".55"/>
+        <rect x="314" y="87" width="4" height="2.4" fill="#f0ead8" opacity=".55"/>
+      </svg>`;
+    }
     if (biome === 'coast') {
       return `
       <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -569,6 +677,15 @@ export class UI {
         el.classList.toggle('active', el.dataset.mode === this.selectedMode);
       });
     }
+    // Keep the current car/stage visible when the lists are scrollable.
+    for (const list of [this.dom.carList, this.dom.stageList]) {
+      const selected = list?.querySelector('.selected');
+      if (!list || !selected) continue;
+      const lr = list.getBoundingClientRect();
+      const sr = selected.getBoundingClientRect();
+      if (sr.top < lr.top) list.scrollTop -= (lr.top - sr.top + 2);
+      else if (sr.bottom > lr.bottom) list.scrollTop += (sr.bottom - lr.bottom + 2);
+    }
 
     const d = carDerived(car);
     this.dom.carSpec.innerHTML = `
@@ -618,8 +735,8 @@ export class UI {
     const est0to100 = Math.max(2.7, 2.2 + (car.weight / 1000) * 1.5 - (car.power / 500) * 0.9);
     this.dom.carFoot.innerHTML = `
       <span>0—100 EST.</span><b>${est0to100.toFixed(1)} S</b>
-      <span>GEARBOX</span><b>6-SPEED</b>
-      <span>HOMOLOGATION</span><b>${car.year}</b>`;
+      <span>GEARBOX</span><b>${car.gearbox || '6-SPEED'}</b>
+      <span>${car.interior === 'modern' ? 'MODEL YEAR' : 'HOMOLOGATION'}</span><b>${car.year}</b>`;
     const cond = resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
     const hazardCount = endless ? 'RANDOM'
       : (stage.hazardCount || (stage.biome === 'jungle' ? 7 : 5));

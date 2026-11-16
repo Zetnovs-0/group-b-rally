@@ -37,6 +37,7 @@ export class Cockpit {
     this.stage = stage;
     this.car = car;
     this.settings = settings;
+    this.modern = car.interior === 'modern' || car.style?.modern === true;
     this.model = null;
     this.acc = 0;
     this.frame = 0;
@@ -66,13 +67,14 @@ export class Cockpit {
   }
 
   _buildMapBase() {
+    const modern = this.modern;
     const canvas = document.createElement('canvas');
     canvas.width = 760; canvas.height = 560;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#0c120f';
+    ctx.fillStyle = modern ? '#0a1117' : '#0c120f';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     // subtle grid
-    ctx.strokeStyle = 'rgba(120,140,115,.055)';
+    ctx.strokeStyle = modern ? 'rgba(143,171,187,.06)' : 'rgba(120,140,115,.055)';
     ctx.lineWidth = 1;
     for (let x = 0; x < 760; x += 38) {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 560); ctx.stroke();
@@ -110,10 +112,10 @@ export class Cockpit {
       if (i === 0) ctx.moveTo(px(u), py(v)); else ctx.lineTo(px(u), py(v));
     });
     ctx.stroke();
-    ctx.strokeStyle = '#78856f';
+    ctx.strokeStyle = modern ? '#5b7d90' : '#78856f';
     ctx.lineWidth = 12;
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(198,207,190,.28)';
+    ctx.strokeStyle = modern ? 'rgba(212,228,238,.3)' : 'rgba(198,207,190,.28)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
     // start/finish
@@ -199,6 +201,11 @@ export class Cockpit {
     return s && s.ctx;
   }
 
+  _accentHex() {
+    const n = this.car.accent || 0xd9c9a3;
+    return n > 0x777777 ? '#' + n.toString(16).padStart(6, '0') : '#d9c9a3';
+  }
+
   /* ============================================================
      NAV / MAP SCREEN
      ============================================================ */
@@ -218,11 +225,15 @@ export class Cockpit {
     ctx.fillRect(0, 0, W, H);
 
     // header
-    ctx.fillStyle = '#141d16';
+    const accent = this.modern ? this._accentHex() : AMBER;
+    ctx.fillStyle = this.modern ? '#0f171e' : '#141d16';
     ctx.fillRect(0, 0, W, 70);
-    ctx.fillStyle = AMBER;
+    ctx.fillStyle = accent;
     ctx.fillRect(0, 0, 5, 70);
-    crispText(ctx, `${this.stage.endless ? '∞' : this.stage.ss}  ${this.stage.name}`, 24, 46, 34, CREAM, 700);
+    crispText(ctx, this.modern
+      ? `NAVIGATION  ·  ${this.stage.name}`
+      : `${this.stage.endless ? '∞' : this.stage.ss}  ${this.stage.name}`,
+    24, 46, 34, CREAM, 700);
     ctx.textAlign = 'right';
     const gearTxt = (state.gear === 0 ? 'R' : String(state.gear || 1));
     const speedTxt = String(Math.round(state.speedKph || 0));
@@ -254,7 +265,7 @@ export class Cockpit {
       const carI = Math.floor(progress * (n - 1));
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      ctx.strokeStyle = 'rgba(242,196,58,.9)';
+      ctx.strokeStyle = this.modern ? this._accentHex() : 'rgba(242,196,58,.9)';
       ctx.lineWidth = 3.5;
       ctx.beginPath();
       for (let i = 0; i <= carI; i += 2) {
@@ -272,12 +283,13 @@ export class Cockpit {
         ctx.save();
         ctx.translate(mx, my);
         ctx.rotate(Math.PI / 4);
-        ctx.strokeStyle = AMBER;
+        const markerCol = this.modern ? this._accentHex() : AMBER;
+        ctx.strokeStyle = markerCol;
         ctx.lineWidth = 2.5;
         ctx.strokeRect(-8 * pulse, -8 * pulse, 16 * pulse, 16 * pulse);
         ctx.restore();
         crispText(ctx, `${Math.max(0, Math.round(state.next.dist - (state.dist || 0)))}m`,
-          mx + 14, my - 12, 17, AMBER, 600);
+          mx + 14, my - 12, 17, markerCol, 600);
       }
       // car marker
       if (state.pos) {
@@ -291,7 +303,7 @@ export class Cockpit {
         glow.addColorStop(1, 'rgba(242,196,58,0)');
         ctx.fillStyle = glow;
         ctx.beginPath(); ctx.arc(cx, cy, 28, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#f2c43a';
+        ctx.fillStyle = this.modern ? this._accentHex() : '#f2c43a';
         ctx.strokeStyle = '#10140f';
         ctx.lineWidth = 2.5;
         ctx.beginPath();
@@ -314,7 +326,7 @@ export class Cockpit {
 
     // right info panel
     const px0 = 710, pw = 288;
-    ctx.fillStyle = '#101812';
+    ctx.fillStyle = this.modern ? '#0e161d' : '#101812';
     rr(ctx, px0, 90, pw, 460, 8);
     ctx.fill();
     ctx.strokeStyle = 'rgba(200,210,190,.14)';
@@ -497,12 +509,13 @@ export class Cockpit {
       ctx.save();
       ctx.translate(mx, my);
       ctx.rotate(Math.PI / 4);
-      ctx.strokeStyle = AMBER;
+      const markerCol = this.modern ? this._accentHex() : AMBER;
+      ctx.strokeStyle = markerCol;
       ctx.lineWidth = 2.5;
       ctx.strokeRect(-8 * pulse, -8 * pulse, 16 * pulse, 16 * pulse);
       ctx.restore();
       crispText(ctx, `${Math.max(0, Math.round(state.next.dist - dist))}m`,
-        mx + 14, my - 12, 17, AMBER, 600);
+        mx + 14, my - 12, 17, markerCol, 600);
     }
 
     // car marker
@@ -516,7 +529,7 @@ export class Cockpit {
       glow.addColorStop(1, 'rgba(242,196,58,0)');
       ctx.fillStyle = glow;
       ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#f2c43a';
+      ctx.fillStyle = this.modern ? this._accentHex() : '#f2c43a';
       ctx.strokeStyle = '#10140f';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -832,6 +845,10 @@ export class Cockpit {
      GAUGES
      ============================================================ */
   _drawGauge(state) {
+    if (this.modern) {
+      this._drawModernGauge(state);
+      return;
+    }
     const s = this.model.screens.gauge;
     if (!this._screenReady(s)) return;
     const ctx = s.ctx;
@@ -898,6 +915,151 @@ export class Cockpit {
       crispText(ctx, 'OFF STAGE', 512, 372, 20, RED, 700, 'center');
     }
     ctx.strokeStyle = 'rgba(220,230,210,.1)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+    if (s.present) s.present(); else s.tex.needsUpdate = true;
+  }
+
+
+  _drawModernGauge(state) {
+    const s = this.model.screens.gauge;
+    if (!this._screenReady(s)) return;
+    const ctx = s.ctx;
+    const W = s.canvas.width, H = s.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, '#090d12');
+    bg.addColorStop(0.55, '#0d141b');
+    bg.addColorStop(1, '#070a0e');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    const accentNum = this.car.accent || 0xd9c9a3;
+    const accent = accentNum > 0x777777
+      ? '#' + accentNum.toString(16).padStart(6, '0')
+      : '#d9c9a3';
+    const cream = '#eef2f5';
+    const muted = '#7f8b94';
+    const speedMax = this.settings.units === 'mph' ? 165 : 260;
+    const speed = this.settings.units === 'mph'
+      ? (state.speedKph || 0) * 0.621371
+      : (state.speedKph || 0);
+    const gear = state.gear || 1;
+    const rpm = state.rpm || 900;
+    const maxRpm = this.car.handling?.maxRpm || 7000;
+
+    // Top status line
+    ctx.fillStyle = 'rgba(255,255,255,.035)';
+    ctx.fillRect(0, 0, W, 74);
+    crispText(ctx, (this.car.name || 'CITY CAR').split(' ')[0], 46, 47, 30, cream, 700);
+    ctx.textAlign = 'center';
+    crispText(ctx, 'COMFORT', 600, 42, 21, muted, 600, 'center');
+    ctx.fillStyle = accent;
+    rr(ctx, 556, 52, 88, 3, 1.5); ctx.fill();
+    ctx.textAlign = 'right';
+    crispText(ctx, '18°C  ·  06:42', 1154, 42, 20, muted, 600, 'right');
+    ctx.textAlign = 'left';
+    ctx.strokeStyle = 'rgba(210,225,235,.13)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(42, 74); ctx.lineTo(W - 42, 74); ctx.stroke();
+
+    // Speed (large, left)
+    ctx.textAlign = 'left';
+    ctx.fillStyle = cream;
+    ctx.font = '400 150px "Share Tech Mono", monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(Math.round(speed)), 46, 220);
+    ctx.textBaseline = 'alphabetic';
+    const speedW = ctx.measureText(String(Math.round(speed))).width;
+    ctx.fillStyle = muted;
+    ctx.font = '600 22px "Barlow Condensed", sans-serif';
+    ctx.fillText(this.settings.units === 'mph' ? 'MPH' : 'KM/H', 52 + speedW, 258);
+    // speed scale arc
+    const arcNorm = clamp(speed / speedMax, 0, 1);
+    ctx.strokeStyle = 'rgba(190,210,220,.13)';
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(246, 212, 150, Math.PI * 0.78, Math.PI * 2.22); ctx.stroke();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(246, 212, 150, Math.PI * 0.78, Math.PI * (0.78 + 1.44 * arcNorm));
+    ctx.stroke();
+
+    // Gear / drive mode (centre)
+    ctx.fillStyle = 'rgba(255,255,255,.03)';
+    rr(ctx, 468, 104, 264, 238, 12); ctx.fill();
+    crispText(ctx, 'GEAR', 600, 136, 19, muted, 600, 'center');
+    ctx.textAlign = 'center';
+    ctx.fillStyle = accent;
+    ctx.font = '700 132px "Barlow Condensed", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(gear === 0 ? 'R' : 'D', 600, 224);
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = cream;
+    ctx.font = '400 28px "Share Tech Mono", monospace';
+    ctx.fillText(gear === 0 ? 'REVERSE' : `${gear}  ·  AUTO`, 600, 306);
+    ctx.textAlign = 'left';
+
+    // RPM / power bar (right)
+    const barX = 806, barY = 116, barW = 340;
+    crispText(ctx, 'REV', barX, 102, 18, muted, 600);
+    ctx.textAlign = 'right';
+    crispText(ctx, `${Math.round(rpm)} RPM`, barX + barW, 102, 18, muted, 600, 'right');
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(190,210,220,.12)';
+    rr(ctx, barX, barY, barW, 18, 9); ctx.fill();
+    const rpmNorm = clamp((rpm - 800) / (maxRpm - 800), 0, 1);
+    const rpmCol = rpmNorm > 0.87 ? '#e7b36b' : accent;
+    ctx.fillStyle = rpmCol;
+    rr(ctx, barX, barY, Math.max(6, barW * rpmNorm), 18, 9); ctx.fill();
+    for (let i = 1; i < 10; i++) {
+      ctx.fillStyle = 'rgba(8,12,16,.7)';
+      ctx.fillRect(barX + (barW / 10) * i, barY, 2, 18);
+    }
+    crispText(ctx, 'STABILITY', barX, 180, 17, muted, 600);
+    crispText(ctx, 'ABS', barX + 150, 180, 17, muted, 600);
+    crispText(ctx, 'TRACTION', barX + 236, 180, 17, muted, 600);
+    ctx.fillStyle = '#8fb7a2';
+    ctx.beginPath();
+    ctx.arc(barX + 94, 175, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(barX + 316, 175, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // throttle / brake usage
+    const throttle = clamp(state.throttle || 0, 0, 1);
+    const brake = clamp(state.brake || 0, 0, 1);
+    crispText(ctx, 'POWER', barX, 238, 17, muted, 600);
+    ctx.fillStyle = 'rgba(190,210,220,.12)';
+    rr(ctx, barX, 252, 150, 10, 5); ctx.fill();
+    ctx.fillStyle = accent;
+    rr(ctx, barX, 252, Math.max(3, 150 * throttle), 10, 5); ctx.fill();
+    crispText(ctx, 'BRAKE', barX + 184, 238, 17, muted, 600);
+    ctx.fillStyle = 'rgba(190,210,220,.12)';
+    rr(ctx, barX + 184, 252, 156, 10, 5); ctx.fill();
+    ctx.fillStyle = brake > 0.02 ? '#e38b78' : 'rgba(190,210,220,.18)';
+    rr(ctx, barX + 184, 252, Math.max(3, 156 * brake), 10, 5); ctx.fill();
+
+    // Trip footer
+    ctx.strokeStyle = 'rgba(210,225,235,.1)';
+    ctx.beginPath(); ctx.moveTo(42, 328); ctx.lineTo(W - 42, 328); ctx.stroke();
+    const distKm = ((state.dist || 0) / 1000).toFixed(2);
+    crispText(ctx, 'TRIP', 46, 364, 18, muted, 600);
+    ctx.fillStyle = cream;
+    ctx.font = '400 27px "Share Tech Mono", monospace';
+    ctx.fillText(`${distKm} KM`, 110, 365);
+    crispText(ctx, 'RANGE', 346, 364, 18, muted, 600);
+    ctx.fillStyle = accent;
+    ctx.font = '400 27px "Share Tech Mono", monospace';
+    ctx.fillText('642 KM', 424, 365);
+    ctx.textAlign = 'right';
+    crispText(ctx, this.car.short, W - 46, 364, 24, 'rgba(238,242,245,.65)', 700, 'right');
+    ctx.textAlign = 'left';
+    // Ambient accent line
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(42, H - 14, W - 84, 2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(220,230,240,.1)';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, W - 2, H - 2);
     if (s.present) s.present(); else s.tex.needsUpdate = true;

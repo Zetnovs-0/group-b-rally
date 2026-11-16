@@ -459,10 +459,15 @@ canvas { display: block; }
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
   min-height: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 2px;
   scrollbar-width: thin;
   scrollbar-color: rgba(242, 196, 58, .32) transparent;
 }
+.stage-list::-webkit-scrollbar { width: 3px; }
+.stage-list::-webkit-scrollbar-thumb { background: rgba(242, 196, 58, .32); }
 .stage-mode {
   display: flex;
   gap: 4px;
@@ -1189,6 +1194,7 @@ input[type=range]::-moz-range-thumb {
   .stage-scene { display: none; }
   .panel { flex: 0 0 auto; }
   .car-list { max-height: 320px; }
+  .stage-list { flex: 0 0 auto; max-height: 34vh; }
   .car-spec { grid-template-columns: 1fr 1fr; }
   .menu-foot { padding: 10px 16px; }
   .foot-mark { display: none; }

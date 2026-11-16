@@ -102,6 +102,8 @@ export class CarPhysics {
      per-frame path so the step only has to do arithmetic. */
   _initVehicle() {
     const st = this.car.style;
+    const h = this.car.handling || {};
+    this.handling = h;
     this.mass = this.car.weight;
     this.wheelbase = st.length * 0.56;
     this.frontWeight = clamp(this.car.frontWeight ?? 0.55, 0.35, 0.68);
@@ -113,11 +115,27 @@ export class CarPhysics {
     this.inertia = this.mass * (st.length * st.length + st.width * st.width) / 12 * 1.08;
     this.dragCdA = 0.72 + st.width * 0.1 + (st.wing === 'big' ? 0.08 : 0);
     this.liftCdA = 0.2 + (st.wing === 'big' ? 0.24 : 0.08);
+    // Modern road cars carry optional electronic systems. Rally cars leave
+    // these undefined, so every original car keeps its old analogue behaviour.
+    this.abs = !!h.abs;
+    this.traction = !!h.traction;
+    this.stability = clamp(h.stability ?? 0, 0, 1);
+    this.brakeAssist = h.brakeAssist ?? 1;
+    this.powerMul = h.powerMul ?? 1;
+    this.peakSlip = h.peakSlip ?? null;
+    this.pitchGain = h.pitchGain ?? 0.0032;
+    this.rollGain = h.rollGain ?? 0.0058;
+    this.comfort = clamp(h.comfort ?? 0, 0, 1);
+    this.maxRpm = h.maxRpm ?? 7900;
+    this.finalDriveRpm = h.maxRpm ?? 7600;
+    this.upshiftRpm = h.upshiftRpm ?? UPSHIFT_RPM;
+    this.downshiftRpm = h.downshiftRpm ?? DOWNSHIFT_RPM;
     const topMs = this.car.topSpeed / 3.6;
-    this.finalDrive = (7600 * Math.PI / 30) / (topMs / WHEEL_RADIUS) / GEAR_RATIOS[5];
+    this.finalDrive = (this.finalDriveRpm * Math.PI / 30) / (topMs / WHEEL_RADIUS) / GEAR_RATIOS[5];
     const peakPowerW = this.car.power * 745.7;
-    const peakOmega = 6500 * Math.PI / 30;
-    this.peakTorque = peakPowerW / peakOmega / this._torqueFactor(6500);
+    const peakRpm = Math.min(6500, this.maxRpm * 0.84);
+    const peakOmega = peakRpm * Math.PI / 30;
+    this.peakTorque = peakPowerW / peakOmega / this._torqueFactor(peakRpm);
     this.wheels = [
       { x: this.halfTrack, z: this.lF, front: true },
       { x: -this.halfTrack, z: this.lF, front: true },
@@ -266,10 +284,10 @@ export class CarPhysics {
     let wheelRpm = wheelOmega * totalRatio * 60 / (Math.PI * 2);
 
     if (this.shiftTimer <= 0) {
-      if (wheelRpm > UPSHIFT_RPM && this.gear < 6) {
+      if (wheelRpm > this.upshiftRpm && this.gear < 6) {
         this.gear += 1;
         this.shiftTimer = 0.18;
-      } else if (wheelRpm < DOWNSHIFT_RPM && this.gear > 1) {
+      } else if (wheelRpm < this.downshiftRpm && this.gear > 1) {
         this.gear -= 1;
         this.shiftTimer = 0.15;
       }
@@ -280,7 +298,7 @@ export class CarPhysics {
     let targetRpm = Math.max(950, wheelRpm);
     // Slipping the clutch off the line lets the engine sit above idle.
     if (this.forwardSpeed < 2.0) targetRpm = Math.max(targetRpm, 1000 + throttle * 2600);
-    targetRpm = clamp(targetRpm, 900, 7900);
+    targetRpm = clamp(targetRpm, 900, this.maxRpm);
     this.rpm = damp(this.rpm, targetRpm, this.shiftTimer > 0 ? 6 : 12, dt);
 
     const turbo = this.car.audio?.turbo ?? 1;
@@ -332,15 +350,21 @@ export class CarPhysics {
     const weightRatio = this.car.weight / 950;
 
     // ---- steering ----
-    // More lock and a faster rack than before, but still speed-sensitive so
-    // the car does not become twitchy at 200 km/h.
-    const authority = clamp(1 / (1 + speedAbs * 0.038), 0.30, 1);
-    const steerLock = THREE.MathUtils.degToRad(36) * authority /
+    // Modern city cars get a quicker, more linear rack with more lock at low
+    // speed. The speed-sensitive falloff and self-centring keep them calm at
+    // motorway pace; rally cars keep the original analogue rack.
+    const h = this.handling;
+    const authority = clamp(1 / (1 + speedAbs * (h.steerFalloff ?? 0.038)),
+      h.minAuthority ?? 0.30, 1);
+    const steerLock = THREE.MathUtils.degToRad(h.steerLock ?? 36) * authority /
       Math.pow(weightRatio, 0.045);
     const targetSteer = steerTarget * steerLock;
-    const steerRate = (7.2 - Math.min(2.4, speedAbs * 0.035)) /
-      Math.pow(weightRatio, 0.04);
-    const returnRate = Math.abs(steerTarget) < 0.02 ? steerRate * 1.5 : steerRate;
+    const steerRate = Math.max(2.2,
+      ((h.steerRate ?? 7.2) - Math.min(2.4, speedAbs * 0.035)) /
+      Math.pow(weightRatio, 0.04));
+    const returnRate = Math.abs(steerTarget) < 0.02
+      ? (h.returnRate ?? steerRate * 1.5)
+      : steerRate;
     const dSteer = clamp(targetSteer - this.steer, -returnRate * dt, returnRate * dt);
     this.steer += dSteer;
     this.steerInput = steerTarget;
@@ -382,14 +406,15 @@ export class CarPhysics {
     if (this.reverse) {
       if (brake > 0.01) driveForce = -brake * this.mass * G * 0.42;
       if (throttle > 0.01 && this.forwardSpeed < -0.15) {
-        brakeMag = throttle * this.mass * G * BRAKE_ACCEL_G * this.car.brake * moving;
+        brakeMag = throttle * this.mass * G * BRAKE_ACCEL_G * this.car.brake *
+          this.brakeAssist * moving;
       }
     } else {
       if (!shifting && throttle > 0.01) {
         const totalRatio = GEAR_RATIOS[this.gear - 1] * this.finalDrive;
         const torque = this.peakTorque * this._torqueFactor(this.rpm) * throttle;
         const boostFactor = 0.6 + 0.4 * this.boost;
-        driveForce = torque * totalRatio * DRIVE_EFFICIENCY / WHEEL_RADIUS * boostFactor;
+        driveForce = torque * totalRatio * DRIVE_EFFICIENCY / WHEEL_RADIUS * boostFactor * this.powerMul;
         if (this.forwardSpeed > topSpeed * 0.995) driveForce = 0;
       }
       if (!shifting && throttle < 0.08 && this.forwardSpeed > 0.5) {
@@ -398,7 +423,8 @@ export class CarPhysics {
         engineBrakeForce = -dragTorque * totalRatio * DRIVE_EFFICIENCY / WHEEL_RADIUS;
       }
       if (this.forwardSpeed > 0.15 || this.forwardSpeed < -0.15) {
-        brakeMag = brake * this.mass * G * BRAKE_ACCEL_G * this.car.brake * moving;
+        brakeMag = brake * this.mass * G * BRAKE_ACCEL_G * this.car.brake *
+          this.brakeAssist * moving;
       }
     }
 
@@ -463,7 +489,7 @@ export class CarPhysics {
     engineBrakeForce *= powerScale;
 
     const steerAngles = this._frontWheelAngles(this.steer);
-    const peakSlip = 0.105 + (1 - surfaceGrip) * 0.045;
+    const peakSlip = this.peakSlip ?? (0.105 + (1 - surfaceGrip) * 0.045);
     let FxBody = 0;
     let FzBody = 0;
     let yawMoment = 0;
@@ -489,11 +515,22 @@ export class CarPhysics {
       const Fx = clamp(desired, -cap, cap);
       const fxi = clamp(Math.abs(Fx) / cap, 0, 0.999);
       const fxDemand = Math.abs(desired) / cap;
-      spinDemand = Math.max(spinDemand, wheelDrive > 0 ? Math.max(0, fxDemand - 0.94) : 0);
-      lockDemand = Math.max(lockDemand, Math.max(0, fxDemand - 0.94));
+      if (!this.traction) {
+        spinDemand = Math.max(spinDemand, wheelDrive > 0 ? Math.max(0, fxDemand - 0.94) : 0);
+      }
+      if (!this.abs) {
+        lockDemand = Math.max(lockDemand, Math.max(0, fxDemand - 0.94));
+      }
+
+      // ABS and traction control preserve steering grip while the tyre is
+      // being used hard longitudinally. They are deliberately simple: they
+      // trim the combined-slip term and keep the wheel rolling.
+      let fxiLat = fxi;
+      if (this.abs && wheelBrake + wheelHand > 1) fxiLat = Math.min(fxiLat, 0.80);
+      if (this.traction && wheelDrive > 1) fxiLat = Math.min(fxiLat, speedAbs < 3 ? 0.88 : 0.72);
 
       let latCap = wheelLatGrip * (w.front ? 0.99 : 1.04) * load *
-        Math.sqrt(1 - fxi * fxi);
+        Math.sqrt(1 - fxiLat * fxiLat);
       // A tyre cannot hold a car on a very steep side-slope. Let it slide.
       latCap *= clamp(1 - Math.max(0, Math.abs(sideGrade) - 0.38) * 1.15, 0.42, 1);
       if (!w.front) latCap *= 1 - 0.8 * handbrake;
@@ -510,8 +547,9 @@ export class CarPhysics {
       const forceScale = clamp(Math.hypot(vLong, vLatWheel) / 1.4, 0, 1);
       const Fy = this._tireLateral(alpha, latCap, peakSlip) * forceScale;
       this.wheelSlip[i] = Math.abs(alpha) / peakSlip;
-      this.wheelLock[i] = clamp((fxDemand - 0.94) / 0.3, 0, 1);
-      this.wheelSpin[i] = wheelDrive > 0 ? clamp((fxDemand - 0.94) / 0.3, 0, 1) : 0;
+      this.wheelLock[i] = this.abs ? 0 : clamp((fxDemand - 0.94) / 0.3, 0, 1);
+      this.wheelSpin[i] = (!this.traction && wheelDrive > 0)
+        ? clamp((fxDemand - 0.94) / 0.3, 0, 1) : 0;
       if (!w.front) rearSlipLoad = Math.max(rearSlipLoad, this.wheelSlip[i]);
 
       // Body-frame force from this wheel.
@@ -554,9 +592,23 @@ export class CarPhysics {
     // most of the self-centring, so this is much lighter than before.
     rDot -= r0 * (0.42 + 0.006 * speedAbs + 0.85 * clamp(rearSlipLoad - 0.85, 0, 1.2));
 
+    // Electronic stability control: nudge the yaw rate toward the kinematic
+    // target and bleed off residual sideways velocity. It only intervenes
+    // when the car is actually sliding, so normal cornering stays natural.
+    const speedFactor = clamp(speedAbs / 6, 0, 1);
+    const stabilityActive = this.stability > 0.01 && handbrake < 0.2;
+    if (stabilityActive) {
+      const maxLat = Math.max(0.8, this.car.grip * surfaceGrip) * G * 1.15;
+      const maxYaw = maxLat / Math.max(4, speedAbs);
+      const targetYaw = clamp(u0 * Math.tan(this.steer) / this.wheelbase, -maxYaw, maxYaw);
+      rDot += (targetYaw - r0) * this.stability * (3.8 + 3.2 * speedFactor);
+      rDot -= r0 * this.stability * 0.55;
+    }
+
     let u1 = u0 + uDot * dt;
     let v1 = v0 + vDot * dt;
     let r1 = r0 + rDot * dt;
+    if (stabilityActive) v1 *= Math.exp(-this.stability * (1.2 + 1.8 * speedFactor) * dt);
 
     // Low-speed settling keeps the car from jittering when stationary.
     if (speedAbs < 0.35 && throttle < 0.02 && brake < 0.02) {
@@ -704,11 +756,11 @@ export class CarPhysics {
         (frontAvg - rearAvg) / Math.max(0.5, this.wheelbase) * w.z +
         (leftAvg - rightAvg) / Math.max(0.5, this.trackWidth) * w.x;
       const residual = clamp(this.wheelGround[i] - planeY, -0.16, 0.16);
-      this.wheelTravel[i] = damp(this.wheelTravel[i], residual, 18, dt);
+      this.wheelTravel[i] = damp(this.wheelTravel[i], residual, 18 - this.comfort * 4, dt);
     }
 
     this.accelLong = clamp((this.forwardSpeed - u0) / Math.max(dt, 1e-4), -30, 30);
-    this.latAccel = damp(this.latAccel, FxBody / this.mass, 13, dt);
+    this.latAccel = damp(this.latAccel, FxBody / this.mass, 13 - this.comfort * 4, dt);
     this.lateralSpeed = -this.vLat;
 
     const transferCap = this.mass * G * 0.14;
@@ -716,13 +768,14 @@ export class CarPhysics {
       this.mass * this.accelLong * this.cgHeight / Math.max(0.5, this.wheelbase),
       -transferCap, transferCap,
     );
-    this.loadTransfer = damp(this.loadTransfer, transferTarget, 13, dt);
+    this.loadTransfer = damp(this.loadTransfer, transferTarget, 13 - this.comfort * 4, dt);
 
-    const targetPitch = clamp(groundPitch - this.accelLong * 0.0032, -0.55, 0.55);
+    const targetPitch = clamp(groundPitch - this.accelLong * this.pitchGain, -0.55, 0.55);
     const targetRoll = clamp(groundRoll +
-      this.latAccel * 0.0058 * Math.min(1.1, weightRatio), -0.26, 0.26);
-    this.pitch = damp(this.pitch, targetPitch, 11, dt);
-    this.roll = damp(this.roll, targetRoll, 11, dt);
+      this.latAccel * this.rollGain * Math.min(1.1, weightRatio), -0.26, 0.26);
+    const bodyDamp = 11 - this.comfort * 3;
+    this.pitch = damp(this.pitch, targetPitch, bodyDamp, dt);
+    this.roll = damp(this.roll, targetRoll, bodyDamp, dt);
 
     this.speedKph = Math.abs(this.forwardSpeed) * 3.6;
     this.wheelRotation = (this.wheelAngle[0] + this.wheelAngle[1] +

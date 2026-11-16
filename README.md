@@ -1,6 +1,6 @@
 # GROUP B — RALLY LEGENDS
 
-A 3D first-person driving game built with Three.js and vanilla JavaScript. It began as a Group B rally tribute and has grown into a broader autosim: ten authored stages across ten environments, fourteen cars from period rally monsters to modern Rally1 and road sports cars, an infinite branching road network, open off-road terrain, solid scenery and destructible trees, a physical cockpit with a working trip-computer map, co-driver pacenotes, and a surface-aware driving model.
+A 3D first-person driving game built with Three.js and vanilla JavaScript. It began as a Group B rally tribute and has grown into a broader autosim: eleven authored stages across eleven environments, nineteen cars from period rally monsters to modern Rally1 and road sports cars, five everyday city cars, an infinite branching road network, open off-road terrain, solid scenery and destructible trees, a physical cockpit with a working trip-computer map, co-driver pacenotes, and a surface-aware driving model.
 
 ![Main menu](docs/menu.png)
 
@@ -18,7 +18,7 @@ Then open <http://localhost:8080/>. The game is desktop-first and supports keybo
 
 ## The game
 
-### Ten stages across ten environments
+### Eleven stages across eleven environments
 - **KIELDER** — a fast, blind-crested forest stage in Northumberland. Loose gravel and mud.
 - **KURU-KURU** — a tight Central American jungle tunnel of wet mud, standing water and roots, with rain.
 - **ROVANIEMI** — Lapland's snowbanks and sweepers, with glare ice and snowfall.
@@ -29,6 +29,7 @@ Then open <http://localhost:8080/>. The game is desktop-first and supports keybo
 - **COL DE L'ISERAN** — high alpine asphalt. Cold switchbacks, stone parapets and stacked hairpins.
 - **EIFEL RING** — damp German forest tarmac. Long fourth-gear crests and blind, off-camber entries.
 - **TOSCANA STRADA** — sunlit hill tarmac through cypress and stone farms. Fast flowing sweeps at dusk.
+- **MERIDIAN CITY** — a wide downtown boulevard loop through glass towers, shopfronts, zebra crossings and street parking. Smooth city asphalt, strong brakes and clean sight lines.
 
 Every authored stage route is generated from a Catmull-Rom spline with its own geometry, terrain, tree/rock scatter, hazards, pacenotes and weather. ENDLESS routes use a dedicated forward-progressing procedural generator. No external models or textures are used.
 
@@ -44,8 +45,11 @@ The regions no longer share one generic forest. Each biome owns its terrain prof
 - **ALPINE** — alpine meadow, exposed limestone, snow-capped skyline and cold mountain asphalt.
 - **EIFEL** — lush oak/birch woodland, damp shade and dark forest tarmac.
 - **TUSCANY** — dry golden grass, cypress, olive tones and sun-bleached hill tarmac.
+- **MERIDIAN CITY** — a dense street grid of procedural facades, lit shop windows, kerbs, parking bays, street lamps, crossings, parked cars and a central plaza with a clock tower. Buildings are solid and the pavement is raised, so the city reads as a real place rather than a painted backdrop.
 
 ![Honshu touge](docs/touge.png)
+
+![Meridian City](docs/city.png)
 
 
 ### ENDLESS mode
@@ -57,7 +61,7 @@ Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road
 - Terrain is a separate **2D tile grid streamed around the car**, not a ribbon tied to the road. Ground therefore exists in every direction, including areas with no road at all. Dense tiles load around the player, distant tiles are disposed, and the grid follows you when you drive far off-road. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like. Endless terrain is smoothed across neighbouring route cross-sections, with lower-frequency micro-relief and a blended mountain-side profile, so streamed hills no longer arrive as sharp sawteeth or vertical seams.
 - Hazards, pacenotes and the co-driver keep being generated with the road. The trip-computer map switches to a live local section instead of trying to draw a shrinking whole route.
 - The timer keeps running, there is no finish gantry, and your furthest distance is stored per stage and car. Quit from the pause menu when you have had enough.
-- Streaming works on all ten environments.
+- Streaming works on all eleven environments, including the city. City side roads still stream buildings, pavements, street furniture and parked cars with their chunks.
 
 ### Cars across eras
 | Car | Layout | Power | Weight | Character |
@@ -76,17 +80,24 @@ Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road
 | Mitsubishi Lancer Evo VI | AWD | 280 hp | 1365 kg | Heavy, planted Group A weapon |
 | Ford Escort RS1800 Mk2 | RWD | 250 hp | 1000 kg | Loud, light and precise |
 | VW Golf GTI 16V Mk2 | FWD | 160 hp | 960 kg | Eager front-drive hot hatch |
+| Mercedes-Benz E 220 d | RWD | 197 hp | 1780 kg | Quiet executive saloon, ABS and stability control |
+| BMW 530i xDrive | AWD | 248 hp | 1785 kg | Sharp everyday saloon with immediate steering |
+| Volvo XC90 B5 AWD | AWD | 250 hp | 2090 kg | Heavy, calm SUV with a high view |
+| Toyota Camry Hybrid | FWD | 218 hp | 1605 kg | Soft, roomy, unflappable city hybrid |
+| VW Tiguan 2.0 TSI | AWD | 190 hp | 1740 kg | Compact SUV with light controls and a settled ride |
 
 ### Cockpit and dash
 - Four camera views — **cockpit**, bonnet, chase and bumper — cycled with **C**, the pad's **LB** or the on-screen **CAM** button.
-- First-person driver's-eye view with a 3D co-driver sitting to your right.
+- First-person driver's-eye view with a 3D co-driver sitting to your right. Modern cars use a road-car cockpit with a soft-touch dash, digital instrument cluster, centre navigation display, ambient trim and a passenger holding a phone.
 - Holding the **right mouse button** (or right stick) lets you look around at him, the side windows and the cabin.
 - A real center-dash **trip-computer screen** displays the stage map, car marker, timer, best time, gear/speed, surface, grip level, road status and radio state. In ENDLESS mode the local map also draws the side-road forks.
 - A second physical **co-driver screen** shows large directional arrows, severity numbers, distance, "tightens/opens" modifiers, the next note, current surface/grip and upcoming hazards.
-- Steering wheel, hands, gear lever and handbrake animate. The interior has a roll cage, harnesses, screens, wipers, mirrors and co-driver with helmet/headset.
+- Steering wheel, hands, gear lever and handbrake animate. Rally interiors have a roll cage, harnesses, screens, wipers, mirrors and a helmeted co-driver; modern interiors swap these for a soft-touch road-car cabin, digital cluster and a passenger.
 - No floating map or timer HUD. The only overlay in normal driving is a small controls hint that fades away.
 
 ![Forest cockpit](docs/cockpit-forest.png)
+
+![Modern city cockpit](docs/cockpit-city.png)
 
 ### Weather and time of day
 Every stage can be run in any combination of conditions. Both are selectable from the menu strip or in Settings:
@@ -100,13 +111,16 @@ Every stage can be run in any combination of conditions. Both are selectable fro
 - Steering has a speed-sensitive lock, a real rack rate, Ackermann front-wheel angles and self-centring return. The car asks for a slip angle rather than snapping to a yaw rate, and the tyre curve now builds force much earlier in the slip range, so small inputs actually bite.
 - Longitudinal load transfer under acceleration and braking changes each wheel's grip. Lateral load transfer is modelled per side with a stability floor. Brake balance follows the dynamic front/rear load, so threshold braking is strong but the rear stays settled; locking the brakes costs steering and leaves lock-up marks.
 - The terrain under all four wheels is sampled independently. Front/rear height differences and left/right height differences feed real gravity along the slope and across it, and the body pitch/roll is fitted to the contact plane instead of the road tangent. A car on a steep side-slope slides; a wall steeper than the climb limit blocks the car instead of letting it drive up a vertical face.
-- A torque-curve engine, six-speed automatic gearbox, clutch-cut shifts, engine braking, turbo spool and aero drag make acceleration and coasting speed-dependent. Wheels can spin or lock and the combined-slip tyre model reduces cornering grip when you use the tyres for braking or traction.
+- A torque-curve engine, multi-speed automatic gearbox, clutch-cut shifts, engine braking, turbo spool and aero drag make acceleration and coasting speed-dependent. Wheels can spin or lock and the combined-slip tyre model reduces cornering grip when you use the tyres for braking or traction.
 - Weight, centre-of-mass position and drivetrain layout affect the balance: AWD launch and neutrality, RWD throttle-oversteer, FWD understeer.
 - Each car has its own grip figure, brake coefficient and tyre package.
+- Modern city cars add a second, convenience-focused setup on top of the same four-wheel model: quick power steering with extra low-speed lock, strong assisted brakes, ABS, traction control and electronic stability control. The stability system trims yaw and sideways slide only when the car is actually slipping, so normal cornering stays natural. Handbrake input still overrides it.
+- City cars are heavy and deliberately calm: they brake from 100 km/h in roughly 15-16 m in the game's units, stay flat under load and resist spinning with a full steering input at motorway speed. Rally cars keep their original analogue, oversteer-friendly behaviour.
+- Modern interiors are built as a separate cockpit specification: soft-touch dashboard, twin digital displays, ambient trim, leather seats, a flat-bottom wheel and a passenger instead of a helmeted rally co-driver. The dashboard map, trip computer and pacenote screen work exactly as before.
 - Surface grip changes by biome and by hazard patches: loose gravel, mud, water, roots, black ice, deep snow, wet tarmac, moss, sand and fesh-fesh. Rolling resistance and engine braking change with the surface too.
 - Handbrake locks the rear axle, cuts rear lateral grip and rotates the car while scrubbing speed.
 - Turbo boost builds with lag; engine/induction/turbo audio follows the revs.
-- The stage surface, ruts, snow banks, roadside markers, trees and boulders all affect the visual and physical route.
+- The stage surface, ruts, snow banks, roadside markers, trees, boulders, city kerbs and buildings all affect the visual and physical route.
 - Start/finish gantry posts are solid. Trees, rocks, logs and stumps are solid too; the corridor barrier beside the road has been removed so you can drive onto the verge and into the scenery.
 - High-speed impacts break smaller objects. Trees, rocks, logs and stumps have their own break thresholds; a birch snaps at a much lower speed than an oak or a boulder. Debris is thrown, tumbles and fades, and the car keeps some momentum. Below the threshold, the object is immovable and stops or deflects the car.
 
@@ -128,7 +142,8 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Trees are fully procedural with tapered multi-segment trunks, buttressed roots, visible limbs and forks, more organic multi-layer solid canopies, horizontal canopy sheets and denser billboard detail. Palms have scarified rings, root flares and a full frond skirt.
 - Sky dome with colour-managed gradient, sun/moon discs, horizon glow, drifting procedural cloud cover and a star field at night.
 - Biome-specific distant ridges (jagged snow peaks, jungle ridges, flat taiga, rift escarpment), telegraph poles and sagging wires, tyre stacks and hay bales on the outside of corners, sponsor boards, hazard warning signs and parked spectator cars.
-- Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes, red safari dirt and the new coastal/alpine/eifel/Tuscan tarmac variants.
+- Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes, red safari dirt, the coastal/alpine/eifel/Tuscan tarmac variants and a clean city asphalt surface.
+- The city is built from procedural architecture rather than a backdrop: facades with lit windows, shopfronts and awnings, raised kerbs and pavements, street lamps, traffic lights, zebra crossings, bins, benches and parked cars. A central plaza has a fountain, benches and a clock tower, and distant blocks form a real skyline. Buildings and parked cars are solid; the pavement is raised and drivable.
 - Branching side roads use the same road materials and get their own shoulders and marker posts. Tapered junction aprons blend the branch deck into the main crown and close the wedge between the carriageways; junction-side posts are kept off the flare.
 - Off-road terrain is generated as a square tile grid around the car, independent of road chunks; sparse trees and boulders are scattered into far tiles so the open world does not end at the verge. Endless terrain cross-sections are smoothed along the route and the mountain-side bias is blended, eliminating the sharp stair-stepped seams of the old streamed tiles.
 - Skid marks are laid down under lock-up or handbrake slides; puddles and wet sheen appear when it rains.
@@ -151,6 +166,7 @@ Graphics quality (high/medium/low), vivid shaders (off by default), weather, tim
 - Tile and chunk vegetation is planted lazily inside the visible fog range and released with its streamed owner. Ground and road geometry still exist far ahead, but invisible canopy no longer costs vertices.
 - The car and cockpit static parts are baked into one mesh per material. Animated pieces (wheels, steering wheel, gear lever, handbrake, co-driver, wipers, screens) stay separate, so nothing loses detail or animation.
 - Terrain uses fewer, larger tiles (25 meshes instead of 49 at high quality) while keeping the same vertex density and ground coverage. Puddles, hazard patches, marker posts, caps and warning boards share instanced batches with their streamed chunks.
+- City blocks are merged by facade and shopfront material, while lamps, parked cars, crossings and pavements share instanced batches per streamed chunk. A downtown block therefore costs a handful of draws rather than one per window or car.
 - Vivid post-processing is off by default; the optional stack remains available in Settings.
 
 ### Mobile

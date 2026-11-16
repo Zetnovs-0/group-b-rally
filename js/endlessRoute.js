@@ -37,6 +37,11 @@ const PROFILES = {
     straightMin: 135, straightMax: 350, straightBias: 0.35,
     gradeAmp: 0.068, gradeShift: 118,
   },
+  city: {
+    cornerMin: 34, cornerMax: 128, angleMin: 20, angleMax: 96,
+    straightMin: 70, straightMax: 210, straightBias: 0.39,
+    gradeAmp: 0.012, gradeShift: 190,
+  },
 };
 
 export function endlessProfile(biome) {
