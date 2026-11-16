@@ -196,7 +196,7 @@ export class Input {
       throttle: this.throttle,
       brake: this.brake,
       handbrake: this.handbrake,
-      steer: this.steerTarget,
+      steer: this.steer,
     };
   }
 

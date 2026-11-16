@@ -64,6 +64,10 @@
       <aside class="panel stages">
         <div class="panel-title"><span class="num">02</span><span>STAGE</span><span class="line"></span></div>
         <div class="stage-list" id="stage-list"></div>
+        <div class="stage-mode" id="stage-mode" role="group" aria-label="Stage mode">
+          <button type="button" data-mode="stage" class="active">STAGE</button>
+          <button type="button" data-mode="endless">ENDLESS <b>∞</b></button>
+        </div>
         <div class="stage-detail" id="stage-detail"></div>
         <div class="stage-intel" id="stage-intel"></div>
         <div class="conditions">
@@ -171,6 +175,14 @@
           <select id="set-quality"><option value="high">HIGH</option><option value="medium">MEDIUM</option><option value="low">LOW</option></select>
         </div>
         <div class="setting-row">
+          <div class="setting-label"><span>VIVID SHADERS</span><small>Bloom, grade & grain (off by default)</small></div>
+          <select id="set-shaders">
+            <option value="off">OFF</option>
+            <option value="vivid">VIVID</option>
+            <option value="cinematic">CINEMATIC</option>
+          </select>
+        </div>
+        <div class="setting-row">
           <div class="setting-label"><span>MASTER VOLUME</span><small id="volume-label">75%</small></div>
           <input type="range" id="set-volume" min="0" max="100" step="1" value="75">
         </div>
@@ -212,7 +224,7 @@
         </div>
       </div>
       <div class="modal-actions">
-        <span class="modal-note">Graphics, weather and time of day apply on the next stage start.</span>
+        <span class="modal-note">Vivid shaders apply instantly. Graphics, weather and time of day apply on the next stage start.</span>
         <button class="btn primary" id="btn-settings-done">DONE</button>
       </div>
     </div>

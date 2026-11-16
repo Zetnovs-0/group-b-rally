@@ -109,7 +109,8 @@ export class WeatherFX {
     this.sprayColor = new THREE.Color(
       this.snow ? 0xe9f2f8
         : this.stage.biome === 'jungle' ? 0x5b4a30
-          : this.wetness > 0.35 ? 0x6d6455 : 0xa08d6b
+          : this.stage.biome === 'safari' ? 0xb07c4d
+            : this.wetness > 0.35 ? 0x6d6455 : 0xa08d6b
     );
     this._sprayTimer = 0;
   }
@@ -130,7 +131,8 @@ export class WeatherFX {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
       map: makeSoftDotTexture(),
-      color: this.stage.biome === 'snow' ? 0xe6eef4 : 0xc4ab7c,
+      color: this.stage.biome === 'snow' ? 0xe6eef4
+        : this.stage.biome === 'safari' ? 0xc79a63 : 0xc4ab7c,
       size: 0.075,
       transparent: true,
       opacity: 0.26,

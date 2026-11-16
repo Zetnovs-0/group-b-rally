@@ -104,17 +104,21 @@ export class CarPhysics {
 
     // ---- surface ----
     const offRoad = info.offRoad;
-    const offRoadFactor = offRoad ? 0.6 : 1.0;
+    const offRoadFactor = offRoad ? 0.68 : 1.0;
     const surfaceGrip = Math.max(0.12, info.grip * offRoadFactor);
     const topSpeed = this.car.topSpeed / 3.6;
 
     // ---- steering ----
     const speedAbs = Math.abs(this.forwardSpeed);
     const weightRatio = this.car.weight / 950;
-    const steerMax = THREE.MathUtils.degToRad(35) *
-      (0.27 + 0.73 / (1 + speedAbs * 0.105)) / Math.pow(weightRatio, 0.12);
+    // A progressive lock that keeps the wheel alive at speed without making
+    // the car feel like it is on rails.
+    const authority = 0.42 + 0.58 / (1 + speedAbs * 0.05);
+    const steerMax = THREE.MathUtils.degToRad(39) * authority /
+      Math.pow(weightRatio, 0.08);
     const targetSteer = steerTarget * steerMax;
-    const steerRate = (4.2 - Math.min(2.3, speedAbs * 0.04)) / Math.sqrt(weightRatio);
+    const steerRate = (7.2 - Math.min(3.0, speedAbs * 0.06)) /
+      Math.pow(weightRatio, 0.06);
     const dSteer = clamp(targetSteer - this.steer, -steerRate * dt, steerRate * dt);
     this.steer += dSteer;
     this.steerInput = steerTarget;
@@ -181,22 +185,23 @@ export class CarPhysics {
     // ---- yaw ----
     const wheelbase = this.car.style.length * 0.56;
     const gripCap = G * this.car.grip * surfaceGrip *
-      (1 + Math.min(speedAbs, 55) / 55 * 0.16) / Math.pow(weightRatio, 0.22);
+      (1 + Math.min(speedAbs, 52) / 52 * 0.38) /
+      Math.pow(weightRatio, 0.18);
     let omega = (vF / wheelbase) * Math.tan(this.steer);
-    const omegaMax = gripCap / Math.max(3.2, speedAbs);
+    const omegaMax = gripCap / Math.max(4.2, speedAbs) * 1.22;
     omega = clamp(omega, -omegaMax, omegaMax);
 
     // drivetrain character
-    const oversteer = this.car.layout === 'RWD' ? 0.6 :
-      this.car.layout === 'AWD' ? 0.14 : -0.1;
+    const oversteer = this.car.layout === 'RWD' ? 0.46 :
+      this.car.layout === 'AWD' ? 0.11 : -0.08;
     const speedFactor = clamp(speedAbs / 22, 0, 1);
-    omega += oversteer * this.steerInput * throttle * speedFactor * surfaceGrip * 0.9;
-    omega += this.steerInput * handbrake * clamp(speedAbs / 12, 0, 1) * 0.9;
-    // off-road yaw is less controlled
-    if (offRoad) omega *= 0.92;
-    const yawDamp = 7.5 - (handbrake * 4.0) - (offRoad ? 2 : 0);
+    omega += oversteer * this.steerInput * throttle * speedFactor * surfaceGrip * 0.85;
+    omega += this.steerInput * handbrake * clamp(speedAbs / 12, 0, 1) * 0.72;
+    // off-road yaw is still a little less controlled, but not a skating rink
+    if (offRoad) omega *= 0.95;
+    const yawDamp = 12.5 - (handbrake * 4.5) - (offRoad ? 2.2 : 0);
     this.yawRate += (omega - this.yawRate) * Math.min(1, dt * yawDamp);
-    this.yawRate = clamp(this.yawRate, -2.6, 2.6);
+    this.yawRate = clamp(this.yawRate, -3.4, 3.4);
     this.yaw += this.yawRate * dt;
 
     // ---- lateral velocity / grip ----
@@ -204,11 +209,11 @@ export class CarPhysics {
     const right = this.rightVector();
     let vR = this.vel.x * right.x + this.vel.z * right.z;
     // newly created slip because heading rotated
-    const latDamp = 7.2 * this.car.grip * surfaceGrip *
-      (handbrake > 0.05 ? 0.3 : 1) * (offRoad ? 0.68 : 1);
+    const latDamp = 10.4 * this.car.grip * surfaceGrip *
+      (handbrake > 0.05 ? 0.4 : 1) * (offRoad ? 0.76 : 1);
     vR *= Math.exp(-latDamp * dt);
     // small lateral push from steering at very low speed (helps turn-in)
-    if (speedAbs > 0.5) vR -= this.steer * Math.min(1, speedAbs / 7) * 0.08 * dt * speedAbs;
+    if (speedAbs > 0.5) vR -= this.steer * Math.min(1, speedAbs / 7) * 0.15 * dt * speedAbs;
     vR = clamp(vR, -16, 16);
     this.lateralSpeed = vR;
     this.latAccel = this.yawRate * vF;
@@ -298,11 +303,13 @@ export class CarPhysics {
     this._updateGear(dt);
 
     // ---- finish ----
-    const finishDist = track.finishGateIndex != null
-      ? track.samples[track.finishGateIndex].dist - 1.5
-      : track.length - 6;
-    if (!this.finished && info.dist >= finishDist) {
-      this.finished = true;
+    if (!track.endless) {
+      const finishDist = track.finishGateIndex != null
+        ? track.samples[track.finishGateIndex].dist - 1.5
+        : track.length - 6;
+      if (!this.finished && info.dist >= finishDist) {
+        this.finished = true;
+      }
     }
     return info;
   }

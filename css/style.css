@@ -455,15 +455,47 @@ canvas { display: block; }
 /* --- stages --- */
 .stage-list {
   margin-top: 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
   min-height: 0;
-  overflow-y: auto;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(242, 196, 58, .32) transparent;
 }
+.stage-mode {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--line-soft);
+  background: rgba(0, 0, 0, .18);
+  flex: 0 0 auto;
+}
+.stage-mode button {
+  flex: 1 1 0;
+  padding: 6px 8px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  cursor: pointer;
+  transition: background .16s, color .16s;
+}
+.stage-mode button b {
+  font-family: var(--cond);
+  font-size: 13px;
+  font-weight: 600;
+  vertical-align: -1px;
+}
+.stage-mode button:hover { color: var(--cream); }
+.stage-mode button.active {
+  background: var(--amber);
+  color: #0b0f0a;
+}
+.stage-mode button.active b { color: #0b0f0a; }
 .stage-card {
   position: relative;
   padding: 0;
@@ -485,17 +517,9 @@ canvas { display: block; }
   width: 2px;
   background: var(--amber);
 }
-.stage-art { position: relative; height: 64px; overflow: hidden; background: #0c120d; }
+.stage-art { position: relative; height: 50px; overflow: hidden; background: #0c120d; }
 .stage-art .biome-art { position: absolute; inset: 0; width: 100%; height: 100%; }
-.stage-art .map-mini {
-  position: absolute;
-  right: 7px; top: 7px;
-  width: 82px; height: 50px;
-  background: rgba(4, 8, 5, .55);
-  border: 1px solid rgba(236, 231, 215, .13);
-  padding: 2px;
-  overflow: visible;
-}
+.stage-art .map-mini { display: none; }
 .map-mini polyline { fill: none; stroke: rgba(236, 231, 215, .7); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
 .map-mini .start { fill: var(--amber); }
 .map-mini .finish { fill: #fff; }
@@ -515,23 +539,27 @@ canvas { display: block; }
 .biome-tag i { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); }
 .stage-body {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 9px 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 5px 6px 6px;
 }
 .stage-name {
   font-family: var(--cond);
-  font-size: 19px;
+  font-size: 14px;
   line-height: .95;
   font-weight: 600;
   letter-spacing: .015em;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.stage-sub { margin-top: 3px; font-size: 7px; letter-spacing: .16em; color: var(--muted); font-weight: 600; }
-.stage-right { text-align: right; flex: 0 0 auto; }
-.stage-len { font-family: var(--mono); font-size: 9px; color: rgba(236, 231, 215, .8); }
-.diff { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; }
-.diff i { width: 9px; height: 2px; background: rgba(236, 231, 215, .16); }
+.stage-sub { display: none; }
+.stage-right { display: flex; align-items: center; gap: 5px; text-align: left; flex: 0 0 auto; }
+.stage-len { font-family: var(--mono); font-size: 7px; color: rgba(236, 231, 215, .8); }
+.diff { display: flex; justify-content: flex-end; gap: 2px; margin-top: 0; }
+.diff i { width: 6px; height: 2px; background: rgba(236, 231, 215, .16); }
 .diff i.on { background: var(--amber); }
 
 .stage-detail {

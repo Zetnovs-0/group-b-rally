@@ -212,7 +212,12 @@ export class AudioEngine {
     n.wind.gain.gain.setTargetAtTime(active ? speed * speed * 0.045 : 0, t, 0.08);
     n.wind.filter.frequency.setTargetAtTime(350 + speed * 900, t, 0.08);
     const surface = state.surface || 'gravel';
-    const surfColor = surface === 'snow' ? 520 : surface === 'mud' ? 380 : surface === 'ice' ? 900 : 1050;
+    const surfColor = surface === 'snow' ? 520
+      : surface === 'mud' ? 380
+        : surface === 'ice' ? 900
+          : surface === 'tarmac' || surface === 'asphalt' ? 1250
+            : surface === 'broken' ? 1120
+              : surface === 'dirt' ? 760 : 1050;
     n.surface.filter.frequency.setTargetAtTime(surfColor + speed * 900, t, 0.08);
     n.surface.gain.gain.setTargetAtTime(active ? speed * 0.09 * (state.offRoad ? 1.5 : 1) : 0, t, 0.06);
     const slip = clamp(state.slip || 0, 0, 1);

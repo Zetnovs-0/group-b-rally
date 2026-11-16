@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   STAGES, getBest, setBest, resolveConditions, CAMERA_MODES,
+  getEndlessBest, setEndlessBest,
 } from './config.js';
 import { clamp, damp, nextFrame, disposeObject } from './util.js';
 import { UI } from './ui.js';
@@ -14,6 +15,7 @@ import { Cockpit } from './cockpit.js';
 import { WeatherFX } from './weather.js';
 import { Headlights, WindscreenFX } from './effects.js';
 import { TouchControls } from './touch.js';
+import { PostFX } from './postfx.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -55,6 +57,9 @@ export class Game {
     this.settings = this.ui.settings;
     this.audio = new AudioEngine(this.settings);
     this.preview = new MenuPreview(renderer);
+    this.postfx = new PostFX(renderer);
+    this._dbSize = new THREE.Vector2();
+    this._postSunColor = new THREE.Color(0xffe6b0);
     this.input = new Input(canvas);
     this.state = 'menu';
     this.scene = null;
@@ -82,6 +87,9 @@ export class Game {
     this.touch = null;
     this.time = 0;
     this.bestTime = null;
+    this.endlessMode = false;
+    this.endlessBest = null;
+    this._endlessSaveTimer = 0;
     this.physAcc = 0;
     this.countdownTime = 0;
     this.countdownShown = 3;
@@ -128,7 +136,7 @@ export class Game {
   }
 
   _bindUI() {
-    this.ui.onStart = (car, stage) => this.startStage(car, stage);
+    this.ui.onStart = (car, stage, endless) => this.startStage(car, stage, endless);
     this.ui.onSelection = (car, stage) => {
       this.preview.setCar(car);
       this.preview.setStage(stage);
@@ -172,6 +180,20 @@ export class Game {
       this.cockpit.speedUnit = this.settings.units === 'mph' ? 'MPH' : 'KM/H';
     }
     if (!this.settings.shake) this.shakeImpulse = 0;
+    this._applyPostFX();
+  }
+
+  _applyPostFX() {
+    if (!this.postfx) return;
+    const mode = ['vivid', 'cinematic'].includes(this.settings.shaders) ? this.settings.shaders : 'off';
+    this.postfx.setMode(mode);
+    this._resizePostFX();
+  }
+
+  _resizePostFX() {
+    if (!this.postfx || !this.renderer) return;
+    const size = this.renderer.getDrawingBufferSize(this._dbSize || new THREE.Vector2());
+    this.postfx.setSize(size.x, size.y);
   }
 
   _applyRendererQuality() {
@@ -181,6 +203,7 @@ export class Game {
     this.renderer.setPixelRatio(cap);
     this.renderer.shadowMap.enabled = q !== 'low';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this._resizePostFX();
   }
 
   _onSettingsChanged(settings) {
@@ -227,9 +250,10 @@ export class Game {
   /* ============================================================
      STAGE LIFECYCLE
      ============================================================ */
-  async startStage(car, stage) {
+  async startStage(car, stage, endless = false) {
     if (this.state === 'loading') return;
     if (!car || !stage) return;
+    this.endlessMode = !!endless;
     if (this.touch?.isTouch) {
       try {
         if (!document.fullscreenElement) {
@@ -245,7 +269,7 @@ export class Game {
     this.ui.hidePause();
     this.ui.hideCountdown();
     const conditions = resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
-    this.ui.showLoading(stage, car, conditions);
+    this.ui.showLoading({ ...stage, endless: this.endlessMode }, car, conditions);
     this.ui.setStartEnabled(false);
     this.ui.showGameHints(false);
     this.touch?.setVisible(false);
@@ -279,6 +303,9 @@ export class Game {
     // shared config (and the menu art) stay untouched.
     this.stage = {
       ...stage,
+      endless: this.endlessMode,
+      ss: this.endlessMode ? '∞' : stage.ss,
+      seed: this.endlessMode ? ((Math.random() * 0x7fffffff) | 0) : stage.seed,
       env: this.conditions.env,
       baseGrip: stage.baseGrip * this.conditions.gripMul,
       conditions: this.conditions,
@@ -293,7 +320,7 @@ export class Game {
     this.ui.setLoading(12, 'RAISING THE SKY');
     await nextFrame();
     this.track.buildSky(this.scene);
-    this.renderer.toneMappingExposure = stage.env.exposure || 1.04;
+    this.renderer.toneMappingExposure = this.stage.env.exposure || 1.04;
     this.ui.setLoading(20, 'SHAPING TERRAIN');
     await nextFrame();
     await this.track.buildTerrain(this.scene, quality);
@@ -306,6 +333,9 @@ export class Game {
     this.ui.setLoading(64, 'PLANTING THE CANOPY');
     await nextFrame();
     this.track.buildScenery(this.scene, quality);
+    if (this.track.endless) {
+      this.track.streamEndless(this.track.samples[3].pos);
+    }
     this.ui.setLoading(88, 'ROLLING OUT THE CAR');
     await nextFrame();
 
@@ -351,7 +381,9 @@ export class Game {
 
   _prepareRun() {
     this.physics.reset(this.track, true);
-    this.bestTime = getBest(this.stage.id, this.car.id);
+    this.bestTime = this.stage.endless ? null : getBest(this.stage.id, this.car.id);
+    this.endlessBest = this.stage.endless ? getEndlessBest(this.baseStage.id, this.car.id) : null;
+    this._endlessSaveTimer = 0;
     this.track.notes.forEach((n) => { n.announced = false; });
     this.time = 0;
     this.radioTimer = 0;
@@ -440,13 +472,15 @@ export class Game {
 
   nextStage() {
     if (!this.stage) return;
-    const idx = STAGES.findIndex((s) => s.id === this.stage.id);
+    const base = this.baseStage || this.stage;
+    const idx = STAGES.findIndex((s) => s.id === base.id);
     const next = STAGES[(idx + 1) % STAGES.length];
     this.ui.selectStage(next.id);
-    this.startStage(this.ui.selectedCar, next);
+    this.startStage(this.ui.selectedCar, next, this.endlessMode);
   }
 
   quitToMenu() {
+    this._saveEndlessRecord();
     this.ui.hidePause();
     this.ui.hideResults();
     this.ui.hideCountdown();
@@ -470,6 +504,7 @@ export class Game {
 
   pause() {
     if (this.state !== 'racing') return;
+    this._saveEndlessRecord();
     this.pausedFrom = this.state;
     this.state = 'paused';
     this.input.reset();
@@ -545,6 +580,7 @@ export class Game {
   _updateCountdown(dt) {
     this.countdownTime -= dt;
     this.input.update(dt);
+    if (this.track.endless) this.track.streamEndless(this.physics.pos);
     const display = Math.max(0, Math.ceil(this.countdownTime));
     if (display !== this.countdownShown && display > 0) {
       this.countdownShown = display;
@@ -584,6 +620,14 @@ export class Game {
       steps++;
     }
     if (steps === 12) this.physAcc = 0;
+    if (this.track.endless) {
+      this.track.streamEndless(this.physics.pos);
+      this._endlessSaveTimer += dt;
+      if (this._endlessSaveTimer > 5) {
+        this._endlessSaveTimer = 0;
+        this._saveEndlessRecord();
+      }
+    }
 
     this.radioTimer = Math.max(0, this.radioTimer - dt);
     this.announceCooldown = Math.max(0, this.announceCooldown - dt);
@@ -630,7 +674,16 @@ export class Game {
   }
 
   renderScene() {
-    if (this.scene && this.camera) {
+    if (!this.scene || !this.camera) return;
+    if (this.postfx && this.postfx.mode !== 'off') {
+      const env = this.track?.env;
+      if (env) this._postSunColor.setHex(env.sunColor || 0xffe6b0);
+      this.postfx.render(this.scene, this.camera, {
+        sunDir: this.track?.sunDir,
+        sunColor: this._postSunColor,
+        sunStrength: Math.min(1, (env?.sunIntensity || 1) / 3),
+      });
+    } else {
       this.renderer.render(this.scene, this.camera);
     }
   }
@@ -794,7 +847,8 @@ export class Game {
 
     // keep the chase cam out of the ground
     if (this.track) {
-      const info = this.track.nearestGlobal(desired);
+      const hint = this.physics?.info?.index ?? this.track.lastIndexHint;
+      const info = this.track.nearest(desired, hint);
       if (info) {
         const lat = (desired.x - info.center.x) * info.right.x + (desired.z - info.center.z) * info.right.z;
         const gh = this.track.heightAtSample(info.index, lat);
@@ -833,7 +887,8 @@ export class Game {
       steer,
       time: 0,
       best: this.bestTime,
-      progress: info.progress,
+      bestDistance: this.endlessBest,
+      progress: this.stage?.endless ? ((info.dist % 1000) / 1000) : info.progress,
       dist: info.dist,
       info,
       notes: this.track.notesAhead(info.dist, 3),
@@ -844,6 +899,8 @@ export class Game {
       pos: info.center,
       coDriverSpeaking: 0,
       fixed: true,
+      endless: !!this.stage?.endless,
+      distance: info.dist,
     };
   }
 
@@ -865,7 +922,8 @@ export class Game {
         steer: p.steer,
         time: this.time,
         best: this.bestTime,
-        progress: info ? info.progress : 0,
+        bestDistance: this.endlessBest,
+        progress: this.stage.endless ? ((dist % 1000) / 1000) : (info ? info.progress : 0),
         dist,
         info,
         notes: this.track.notesAhead(dist, 3),
@@ -875,6 +933,8 @@ export class Game {
         heading: p.yaw,
         pos: p.pos,
         coDriverSpeaking: clamp(this.radioTimer / 2.0, 0, 1),
+        endless: !!this.stage.endless,
+        distance: dist,
       };
     }
     this.cockpit.update(dt, state, this.carModel);
@@ -1025,6 +1085,7 @@ export class Game {
      FINISH
      ============================================================ */
   _startFinish() {
+    if (this.stage?.endless) return;
     this.state = 'finishing';
     this.finishTime = this.time;
     this.finishTimer = 1.45;
@@ -1037,6 +1098,7 @@ export class Game {
   }
 
   _showResults() {
+    if (this.stage?.endless) return;
     this.resultsShown = true;
     this.state = 'finished';
     this.glassFx?.update(0.016, { rain: 0 });
@@ -1068,6 +1130,17 @@ export class Game {
     this.renderScene();
   }
 
+  _saveEndlessRecord() {
+    if (!this.stage?.endless || !this.physics || !this.car) return;
+    const dist = this.physics.info?.dist || this.physics.odometer || 0;
+    const stageId = this.baseStage?.id || this.stage.id;
+    const prev = getEndlessBest(stageId, this.car.id) || 0;
+    if (dist > prev) {
+      setEndlessBest(stageId, this.car.id, dist);
+      this.endlessBest = dist;
+    }
+  }
+
   /* ============================================================
      CLEANUP / RESIZE
      ============================================================ */
@@ -1097,6 +1170,7 @@ export class Game {
 
   resize(w, h) {
     this.preview.resize(w, h);
+    this._resizePostFX();
     this.glassFx?.resize();
     if (this.camera) {
       this.camera.aspect = Math.max(0.1, w / h);
@@ -1113,6 +1187,9 @@ export class Game {
       progress: this.physics?.info?.progress,
       car: this.car?.id,
       stage: this.stage?.id,
+      endless: !!this.stage?.endless,
+      distance: this.physics?.info?.dist,
+      chunks: this.track?.chunks?.length,
       gears: this.physics?.gear,
       rpm: this.physics?.rpm,
     };

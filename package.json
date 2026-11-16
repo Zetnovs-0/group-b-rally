@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A procedural Group B rally game with first-person cockpits, pacenotes and three biomes.",
+  "description": "A Group B rally game with streaming endless stages, six biomes, first-person cockpits and pacenotes.",
   "scripts": {
     "start": "python3 -m http.server 8080",
     "serve": "python3 -m http.server 8080"

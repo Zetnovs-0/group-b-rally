@@ -1,4 +1,4 @@
-import { clamp, formatTime, formatDistance } from './util.js';
+import { clamp, formatTime } from './util.js';
 
 const AMBER = '#f2c43a';
 const CREAM = '#efe9d7';
@@ -80,6 +80,7 @@ export class Cockpit {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(760, y); ctx.stroke();
     }
     const map = this.track.map;
+    if (this.track.endless) return canvas;
     const px = (u) => 34 + u * 692;
     const py = (v) => 34 + v * 492;
     // hazard colored segments
@@ -216,7 +217,7 @@ export class Cockpit {
     ctx.fillRect(0, 0, W, 70);
     ctx.fillStyle = AMBER;
     ctx.fillRect(0, 0, 5, 70);
-    crispText(ctx, `${this.stage.ss}  ${this.stage.name}`, 24, 46, 34, CREAM, 700);
+    crispText(ctx, `${this.stage.endless ? '∞' : this.stage.ss}  ${this.stage.name}`, 24, 46, 34, CREAM, 700);
     ctx.textAlign = 'right';
     const gearTxt = (state.gear === 0 ? 'R' : String(state.gear || 1));
     const speedTxt = String(Math.round(state.speedKph || 0));
@@ -230,74 +231,79 @@ export class Cockpit {
 
     // map area
     const mapW = 660, mapH = 450;
+    const progress = state.progress || 0;
     ctx.save();
     // route
     ctx.globalAlpha = 0.45;
     ctx.drawImage(this.mapBase, 20, 88, mapW, mapH);
     ctx.globalAlpha = 1;
-    const map = this.track.map;
-    const px = (u) => 20 + (34 + u * 692) / 760 * mapW;
-    const py = (v) => 88 + (34 + v * 492) / 560 * mapH;
+    if (this.track.endless) {
+      this._drawEndlessNav(ctx, state, 20, 88, mapW, mapH);
+    } else {
+      const map = this.track.map;
+      const px = (u) => 20 + (34 + u * 692) / 760 * mapW;
+      const py = (v) => 88 + (34 + v * 492) / 560 * mapH;
 
-    // completed route overlay
-    const progress = state.progress || 0;
-    const n = this.track.samples.length;
-    const carI = Math.floor(progress * (n - 1));
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(242,196,58,.9)';
-    ctx.lineWidth = 3.5;
-    ctx.beginPath();
-    for (let i = 0; i <= carI; i += 2) {
-      const [u, v] = map.pts[i];
-      if (i === 0) ctx.moveTo(px(u), py(v)); else ctx.lineTo(px(u), py(v));
-    }
-    ctx.stroke();
-    // next note marker
-    if (state.next) {
-      const ns = this.track.samples[state.next.index];
-      const [u, v] = map.pts[ns.i];
-      const mx = px(u), my = py(v);
-      this.nextUpPulse = (this.nextUpPulse + 0.15) % (Math.PI * 2);
-      const pulse = 1 + Math.sin(this.nextUpPulse) * 0.12;
-      ctx.save();
-      ctx.translate(mx, my);
-      ctx.rotate(Math.PI / 4);
-      ctx.strokeStyle = AMBER;
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(-8 * pulse, -8 * pulse, 16 * pulse, 16 * pulse);
-      ctx.restore();
-      crispText(ctx, `${Math.max(0, Math.round(state.next.dist - (state.dist || 0)))}m`,
-        mx + 14, my - 12, 17, AMBER, 600);
-    }
-    // car marker
-    if (state.pos) {
-      const [u, v] = this.track.mapTransform(state.pos.x, state.pos.z);
-      const cx = px(u), cy = py(v);
-      const hd = state.heading || 0;
-      const dx = Math.sin(hd), dz = Math.cos(hd);
-      const size = 14;
-      // glow
-      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, 28);
-      glow.addColorStop(0, 'rgba(242,196,58,.5)');
-      glow.addColorStop(1, 'rgba(242,196,58,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(cx, cy, 28, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#f2c43a';
-      ctx.strokeStyle = '#10140f';
-      ctx.lineWidth = 2.5;
+      // completed route overlay
+      const n = this.track.samples.length;
+      const carI = Math.floor(progress * (n - 1));
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(242,196,58,.9)';
+      ctx.lineWidth = 3.5;
       ctx.beginPath();
-      ctx.moveTo(cx + dx * size, cy + dz * size);
-      ctx.lineTo(cx + dz * size * 0.58 - dx * size * 0.5, cy - dx * size * 0.58 - dz * size * 0.5);
-      ctx.lineTo(cx - dz * size * 0.58 - dx * size * 0.5, cy + dx * size * 0.58 - dz * size * 0.5);
-      ctx.closePath();
-      ctx.fill();
+      for (let i = 0; i <= carI; i += 2) {
+        const [u, v] = map.pts[i];
+        if (i === 0) ctx.moveTo(px(u), py(v)); else ctx.lineTo(px(u), py(v));
+      }
       ctx.stroke();
+      // next note marker
+      if (state.next) {
+        const ns = this.track.samples[state.next.index];
+        const [u, v] = map.pts[ns.i];
+        const mx = px(u), my = py(v);
+        this.nextUpPulse = (this.nextUpPulse + 0.15) % (Math.PI * 2);
+        const pulse = 1 + Math.sin(this.nextUpPulse) * 0.12;
+        ctx.save();
+        ctx.translate(mx, my);
+        ctx.rotate(Math.PI / 4);
+        ctx.strokeStyle = AMBER;
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(-8 * pulse, -8 * pulse, 16 * pulse, 16 * pulse);
+        ctx.restore();
+        crispText(ctx, `${Math.max(0, Math.round(state.next.dist - (state.dist || 0)))}m`,
+          mx + 14, my - 12, 17, AMBER, 600);
+      }
+      // car marker
+      if (state.pos) {
+        const [u, v] = this.track.mapTransform(state.pos.x, state.pos.z);
+        const cx = px(u), cy = py(v);
+        const hd = state.heading || 0;
+        const dx = Math.sin(hd), dz = Math.cos(hd);
+        const size = 14;
+        const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, 28);
+        glow.addColorStop(0, 'rgba(242,196,58,.5)');
+        glow.addColorStop(1, 'rgba(242,196,58,0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(cx, cy, 28, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f2c43a';
+        ctx.strokeStyle = '#10140f';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx + dx * size, cy + dz * size);
+        ctx.lineTo(cx + dz * size * 0.58 - dx * size * 0.5, cy - dx * size * 0.58 - dz * size * 0.5);
+        ctx.lineTo(cx - dz * size * 0.58 - dx * size * 0.5, cy + dx * size * 0.58 - dz * size * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
     }
     // route labels
-    crispText(ctx, 'SS ROUTE', 36, 120, 16, 'rgba(170,182,160,.55)', 600);
+    crispText(ctx, this.track.endless ? 'ENDLESS ROUTE' : 'SS ROUTE', 36, 120, 16, 'rgba(170,182,160,.55)', 600);
     ctx.textAlign = 'right';
-    crispText(ctx, `${(this.track.length / 1000).toFixed(2)} KM`, 656, 120, 16, 'rgba(170,182,160,.55)', 600, 'right');
+    crispText(ctx, this.track.endless
+      ? `${((state.dist || 0) / 1000).toFixed(2)} KM RUN`
+      : `${(this.track.length / 1000).toFixed(2)} KM`, 656, 120, 16, 'rgba(170,182,160,.55)', 600, 'right');
     ctx.textAlign = 'left';
     ctx.restore();
 
@@ -308,20 +314,29 @@ export class Cockpit {
     ctx.fill();
     ctx.strokeStyle = 'rgba(200,210,190,.14)';
     ctx.stroke();
-    crispText(ctx, 'STAGE TIME', px0 + 20, 122, 15, MUTED, 600);
+    crispText(ctx, state.endless ? 'RUN TIME' : 'STAGE TIME', px0 + 20, 122, 15, MUTED, 600);
     importantText(ctx, formatTime(state.time || 0), px0 + 20, 178, 47, CREAM);
-    // best
-    crispText(ctx, 'BEST', px0 + 20, 214, 14, MUTED, 600);
-    importantText(ctx, state.best ? formatTime(state.best) : '--:--.--', px0 + 20, 242, 25,
-      state.best ? TEAL : 'rgba(150,160,145,.4)');
+    // best / furthest
+    if (state.endless) {
+      crispText(ctx, 'FURTHEST', px0 + 20, 214, 14, MUTED, 600);
+      importantText(ctx, state.bestDistance ? `${(state.bestDistance / 1000).toFixed(2)} KM` : '-- KM',
+        px0 + 20, 242, 25, state.bestDistance ? TEAL : 'rgba(150,160,145,.4)');
+    } else {
+      crispText(ctx, 'BEST', px0 + 20, 214, 14, MUTED, 600);
+      importantText(ctx, state.best ? formatTime(state.best) : '--:--.--', px0 + 20, 242, 25,
+        state.best ? TEAL : 'rgba(150,160,145,.4)');
+    }
     // progress bar
     const barY = 272;
+    const barProgress = state.endless ? ((state.dist || 0) % 1000) / 1000 : progress;
     ctx.fillStyle = 'rgba(180,195,170,.13)';
     rr(ctx, px0 + 20, barY, pw - 40, 10, 5); ctx.fill();
     ctx.fillStyle = AMBER;
-    rr(ctx, px0 + 20, barY, Math.max(4, (pw - 40) * clamp(progress, 0, 1)), 10, 5); ctx.fill();
-    crispText(ctx, 'DISTANCE', px0 + 20, 310, 14, MUTED, 600);
-    importantText(ctx, `${((1 - progress) * this.track.length / 1000).toFixed(2)} KM`,
+    rr(ctx, px0 + 20, barY, Math.max(4, (pw - 40) * clamp(barProgress, 0, 1)), 10, 5); ctx.fill();
+    crispText(ctx, state.endless ? 'DISTANCE RUN' : 'DISTANCE', px0 + 20, 310, 14, MUTED, 600);
+    importantText(ctx, state.endless
+      ? `${((state.dist || 0) / 1000).toFixed(2)} KM`
+      : `${((1 - progress) * this.track.length / 1000).toFixed(2)} KM`,
       px0 + 20, 336, 27, CREAM);
     // surface
     const offRoad = !!(state.info && state.info.offRoad);
@@ -373,6 +388,130 @@ export class Cockpit {
     ctx.strokeRect(1, 1, W - 2, H - 2);
 
     s.tex.needsUpdate = true;
+  }
+
+  _drawEndlessNav(ctx, state, x, y, w, h) {
+    const track = this.track;
+    if (!track.samples || !track.samples.length) return;
+    const dist = state.dist || 0;
+    const step = track.step || 1.7;
+    const iC = clamp(Math.round(dist / step), 0, track.n - 1);
+    const i0 = Math.max(0, iC - 100);
+    const i1 = Math.min(track.n - 1, iC + 390);
+    const idxs = [];
+    for (let i = i0; i <= i1; i += 2) idxs.push(i);
+    if (idxs[idxs.length - 1] !== i1) idxs.push(i1);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const i of idxs) {
+      const p = track.samples[i].pos;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    const spanX = Math.max(12, maxX - minX);
+    const spanZ = Math.max(12, maxZ - minZ);
+    const pad = 22;
+    const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanZ);
+    const ox = x + (w - spanX * scale) / 2;
+    const oy = y + (h - spanZ * scale) / 2;
+    const proj = (px, pz) => [ox + (px - minX) * scale, oy + (pz - minZ) * scale];
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 2, y + 2, w - 4, h - 4);
+    ctx.clip();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    // hazard sections visible on this local map
+    for (const hazard of track.hazardPatches) {
+      if (hazard.end < i0 || hazard.start > i1) continue;
+      ctx.strokeStyle = hazard.color || AMBER;
+      ctx.globalAlpha = 0.34;
+      ctx.lineWidth = 20;
+      ctx.beginPath();
+      let started = false;
+      for (let i = Math.max(hazard.start, i0); i <= Math.min(hazard.end, i1); i += 2) {
+        const p = track.samples[i].pos;
+        const [mx, my] = proj(p.x, p.z);
+        if (!started) { ctx.moveTo(mx, my); started = true; } else ctx.lineTo(mx, my);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // route body
+    ctx.strokeStyle = 'rgba(0,0,0,.58)';
+    ctx.lineWidth = 15;
+    ctx.beginPath();
+    idxs.forEach((i, k) => {
+      const p = track.samples[i].pos;
+      const [mx, my] = proj(p.x, p.z);
+      if (k === 0) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
+    });
+    ctx.stroke();
+    ctx.strokeStyle = '#78856f';
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(198,207,190,.28)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // the part already driven
+    ctx.strokeStyle = 'rgba(242,196,58,.85)';
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    let started = false;
+    for (let i = i0; i <= iC; i += 2) {
+      const p = track.samples[i].pos;
+      const [mx, my] = proj(p.x, p.z);
+      if (!started) { ctx.moveTo(mx, my); started = true; } else ctx.lineTo(mx, my);
+    }
+    ctx.stroke();
+
+    // next pacenote marker
+    if (state.next && state.next.index != null) {
+      const ns = track.samples[clamp(state.next.index, 0, track.n - 1)];
+      const [mx, my] = proj(ns.pos.x, ns.pos.z);
+      this.nextUpPulse = (this.nextUpPulse + 0.15) % (Math.PI * 2);
+      const pulse = 1 + Math.sin(this.nextUpPulse) * 0.12;
+      ctx.save();
+      ctx.translate(mx, my);
+      ctx.rotate(Math.PI / 4);
+      ctx.strokeStyle = AMBER;
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(-8 * pulse, -8 * pulse, 16 * pulse, 16 * pulse);
+      ctx.restore();
+      crispText(ctx, `${Math.max(0, Math.round(state.next.dist - dist))}m`,
+        mx + 14, my - 12, 17, AMBER, 600);
+    }
+
+    // car marker
+    if (state.pos) {
+      const [cx, cy] = proj(state.pos.x, state.pos.z);
+      const hd = state.heading || 0;
+      const dx = Math.sin(hd), dz = Math.cos(hd);
+      const size = 15;
+      const glow = ctx.createRadialGradient(cx, cy, 1, cx, cy, 30);
+      glow.addColorStop(0, 'rgba(242,196,58,.5)');
+      glow.addColorStop(1, 'rgba(242,196,58,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f2c43a';
+      ctx.strokeStyle = '#10140f';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + dx * size, cy + dz * size);
+      ctx.lineTo(cx + dz * size * 0.58 - dx * size * 0.5, cy - dx * size * 0.58 - dz * size * 0.5);
+      ctx.lineTo(cx - dz * size * 0.58 - dx * size * 0.5, cy + dx * size * 0.58 - dz * size * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(220,230,210,.12)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
   }
 
   /* ============================================================

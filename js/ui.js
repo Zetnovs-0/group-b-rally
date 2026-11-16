@@ -1,6 +1,7 @@
 import {
   CARS, STAGES, getCar, getStage, loadSettings, saveSettings, getBest, clearBests,
   carDerived, BIOME_LABEL, WEATHER_MODES, TIME_MODES, CAMERA_MODES, resolveConditions,
+  getEndlessBest,
 } from './config.js';
 import { getStageMetrics } from './track.js';
 import { formatTime, formatDelta } from './util.js';
@@ -17,6 +18,7 @@ const TIPS = [
   'Tip: Handbrake rotates the car on tight hairpins — but scrubs speed fast.',
   'Tip: You can drive onto the verge, but the tree line is hard and unforgiving.',
   'Tip: The map and timer are mounted in the car. Look down, not at a floating HUD.',
+  'Tip: ENDLESS mode keeps generating road ahead. Your furthest distance is your record.',
   'Tip: Heavier cars carry momentum. Brake earlier, and let the weight work for you.',
 ];
 
@@ -26,6 +28,7 @@ export class UI {
     const sel = this._loadSelection();
     this.selectedCarId = getCar(sel.car).id;
     this.selectedStageId = getStage(sel.stage).id;
+    this.selectedMode = sel.mode === 'endless' ? 'endless' : 'stage';
     this.onStart = null;
     this.onRestart = null;
     this.onResume = null;
@@ -42,10 +45,12 @@ export class UI {
       stageList: $('#stage-list'),
       carSpec: $('#car-spec'),
       carFoot: $('#car-foot'),
+      stageMode: $('#stage-mode'),
       stageDetail: $('#stage-detail'),
       stageIntel: $('#stage-intel'),
       best: $('#best-display'),
       startBtn: $('#btn-start'),
+      startLabel: $('.start-label'),
       startMeta: $('.start-meta'),
       sceneIndex: $('#scene-index'),
       sceneBlurb: $('#scene-blurb'),
@@ -99,19 +104,20 @@ export class UI {
 
   get selectedCar() { return getCar(this.selectedCarId); }
   get selectedStage() { return getStage(this.selectedStageId); }
+  get selectedEndless() { return this.selectedMode === 'endless'; }
 
   _loadSelection() {
     try {
       const raw = localStorage.getItem('gbr.selection.v1');
       if (raw) return JSON.parse(raw);
     } catch { /* ignore */ }
-    return { car: 'quattro', stage: 'kielder' };
+    return { car: 'quattro', stage: 'kielder', mode: 'stage' };
   }
 
   _saveSelection() {
     try {
       localStorage.setItem('gbr.selection.v1', JSON.stringify({
-        car: this.selectedCarId, stage: this.selectedStageId,
+        car: this.selectedCarId, stage: this.selectedStageId, mode: this.selectedMode,
       }));
     } catch { /* ignore */ }
   }
@@ -183,6 +189,13 @@ export class UI {
           <path d="M80 89 L90 61 L100 89Z"/><path d="M188 89 L198 58 L208 89Z"/><path d="M284 89 L294 62 L304 89Z"/>
           <path d="M370 89 L382 56 L394 89Z"/>
         </g>
+        <g>
+          <path d="M148 90 L182 63 L220 63 L254 90Z" fill="#5b4b34"/>
+          <path d="M158 90 L187 65 L194 65 L170 90Z" fill="#3d3223" opacity=".7"/>
+          <path d="M244 90 L214 65 L221 65 L252 90Z" fill="#3d3223" opacity=".7"/>
+          <path d="M185 65 L215 65 L204 90 L196 90Z" fill="#6f7040" opacity=".55"/>
+          <path d="M178 74 L194 78 M222 74 L208 78" stroke="#2a2318" stroke-width="1.2" opacity=".45"/>
+        </g>
         <rect y="82" width="400" height="8" fill="#202b19"/>
         <rect y="61" width="400" height="20" fill="#c7d1c0" opacity=".08"/>
       </svg>`;
@@ -215,8 +228,121 @@ export class UI {
         <g fill="#2e4925" opacity=".8">
           <ellipse cx="105" cy="72" rx="35" ry="9"/><ellipse cx="268" cy="78" rx="42" ry="10"/>
         </g>
+        <g>
+          <path d="M148 90 L184 64 L218 64 L252 90Z" fill="#6a4f2f"/>
+          <path d="M158 90 L189 66 L198 66 L174 90Z" fill="#4a3521" opacity=".8"/>
+          <path d="M242 90 L212 66 L221 66 L249 90Z" fill="#4a3521" opacity=".8"/>
+          <ellipse cx="194" cy="84" rx="16" ry="4" fill="#67808a" opacity=".35"/>
+          <ellipse cx="225" cy="76" rx="10" ry="2.5" fill="#67808a" opacity=".25"/>
+          <path d="M190 70 Q198 78 193 86 M231 70 Q224 78 230 86" stroke="#342716" stroke-width="1" fill="none" opacity=".6"/>
+        </g>
         <rect y="84" width="400" height="6" fill="#1b2615"/>
         <rect y="52" width="400" height="26" fill="#d7e2c5" opacity=".055"/>
+      </svg>`;
+    }
+    if (biome === 'japan') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#335c75"/><stop offset=".62" stop-color="#8da6a0"/><stop offset="1" stop-color="#425a44"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="318" cy="22" r="12" fill="#d9714f" opacity=".55"/>
+        <path d="M0 57 L54 30 L94 53 L150 25 L214 55 L278 32 L338 54 L400 34 L400 90 L0 90Z" fill="#3f5f4d" opacity=".7"/>
+        <path d="M0 68 L62 50 L126 66 L192 48 L260 68 L330 52 L400 66 L400 90 L0 90Z" fill="#223a2a" opacity=".88"/>
+        <g fill="#0d2616">
+          <path d="M16 90 L27 52 L38 90Z"/><path d="M34 90 L47 44 L60 90Z"/><path d="M60 90 L71 56 L82 90Z"/>
+          <path d="M104 90 L116 46 L128 90Z"/><path d="M124 90 L138 38 L152 90Z"/><path d="M152 90 L164 54 L176 90Z"/>
+          <path d="M206 90 L218 46 L230 90Z"/><path d="M228 90 L242 36 L256 90Z"/><path d="M258 90 L270 54 L282 90Z"/>
+          <path d="M304 90 L316 45 L328 90Z"/><path d="M326 90 L340 38 L354 90Z"/><path d="M356 90 L368 52 L380 90Z"/>
+        </g>
+        <g fill="#a63b2b" opacity=".92">
+          <rect x="284" y="55" width="34" height="3"/><rect x="290" y="50" width="4" height="14"/><rect x="308" y="50" width="4" height="14"/>
+          <rect x="280" y="48" width="42" height="2.4"/>
+        </g>
+        <g>
+          <path d="M146 90 L182 62 L218 62 L254 90Z" fill="#2b3132"/>
+          <path d="M158 90 L186 64 L194 64 L170 90Z" fill="#202526" opacity=".8"/>
+          <path d="M242 90 L214 64 L222 64 L250 90Z" fill="#202526" opacity=".8"/>
+          <path d="M199 64 L203 64 L210 90 L205 90Z" fill="#d9d9c9" opacity=".7"/>
+          <path d="M188 64 L192 64 L182 90 L176 90Z" fill="#d9d9c9" opacity=".55"/>
+          <path d="M212 64 L216 64 L226 90 L220 90Z" fill="#d9d9c9" opacity=".55"/>
+          <path d="M164 72 L187 70 M236 72 L213 70" stroke="#aeb8b2" stroke-width="1.2" opacity=".55"/>
+          <path d="M150 74 L178 70 M250 74 L222 70" stroke="#8b928c" stroke-width="1" opacity=".6"/>
+        </g>
+        <rect y="84" width="400" height="6" fill="#1a241b"/>
+        <rect y="43" width="400" height="34" fill="#dfe8e2" opacity=".07"/>
+      </svg>`;
+    }
+    if (biome === 'russia') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6d8494"/><stop offset=".64" stop-color="#b8c1bb"/><stop offset="1" stop-color="#7e8c7f"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <g opacity=".24" fill="#e4e9e6">
+          <ellipse cx="98" cy="17" rx="55" ry="9"/><ellipse cx="142" cy="14" rx="34" ry="6"/>
+          <ellipse cx="310" cy="22" rx="60" ry="8"/>
+        </g>
+        <path d="M0 58 L58 42 L118 56 L180 40 L244 57 L310 44 L366 55 L400 48 L400 90 L0 90Z" fill="#4a5a4a" opacity=".62"/>
+        <path d="M0 70 L70 58 L136 68 L204 56 L272 68 L338 58 L400 66 L400 90 L0 90Z" fill="#33422f" opacity=".78"/>
+        <g stroke="#d7d5c8" stroke-width="2.2">
+          <path d="M22 90 L24 38"/><path d="M46 90 L47 44"/><path d="M74 90 L77 34"/><path d="M98 90 L96 48"/>
+          <path d="M140 90 L142 40"/><path d="M164 90 L166 46"/><path d="M192 90 L190 35"/><path d="M216 90 L218 49"/>
+          <path d="M258 90 L260 39"/><path d="M282 90 L284 45"/><path d="M310 90 L308 34"/><path d="M334 90 L336 47"/>
+          <path d="M366 90 L368 41"/><path d="M388 90 L390 46"/>
+        </g>
+        <g fill="#2c422f" opacity=".92">
+          <ellipse cx="24" cy="34" rx="15" ry="10"/><ellipse cx="77" cy="30" rx="17" ry="11"/>
+          <ellipse cx="142" cy="36" rx="16" ry="10"/><ellipse cx="190" cy="31" rx="18" ry="11"/>
+          <ellipse cx="260" cy="35" rx="15" ry="10"/><ellipse cx="308" cy="30" rx="18" ry="11"/>
+          <ellipse cx="368" cy="37" rx="16" ry="10"/>
+        </g>
+        <g>
+          <path d="M150 90 L185 64 L215 64 L250 90Z" fill="#4d4b43"/>
+          <path d="M160 90 L190 66 L198 66 L176 90Z" fill="#393833" opacity=".8"/>
+          <path d="M240 90 L210 66 L218 66 L248 90Z" fill="#393833" opacity=".8"/>
+          <path d="M197 64 L203 64 L200 90 L195 90Z" fill="#c9c4ad" opacity=".16"/>
+          <path d="M181 68 L186 76 L182 84 M218 67 L213 76 L217 87 M195 70 L201 80" stroke="#23231e" stroke-width="1" fill="none" opacity=".7"/>
+          <path d="M170 90 L191 66 M230 90 L209 66" stroke="#7d6d4b" stroke-width="2" opacity=".22"/>
+        </g>
+        <rect y="84" width="400" height="6" fill="#202b1c"/>
+        <rect y="50" width="400" height="30" fill="#dbe3d9" opacity=".07"/>
+      </svg>`;
+    }
+    if (biome === 'safari') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#88a5bd"/><stop offset=".58" stop-color="#d8c49c"/><stop offset="1" stop-color="#b09263"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="312" cy="24" r="15" fill="#ffe0a0" opacity=".72"/>
+        <path d="M0 62 L48 48 L104 60 L170 46 L238 60 L300 50 L356 60 L400 54 L400 90 L0 90Z" fill="#8a7149" opacity=".58"/>
+        <path d="M0 74 L66 64 L130 72 L198 62 L268 72 L334 64 L400 70 L400 90 L0 90Z" fill="#6f5b39" opacity=".72"/>
+        <g fill="#26301c">
+          <path d="M42 90 L46 54 L50 90Z"/><path d="M46 58 Q20 48 6 50 Q24 58 46 58Z"/><path d="M46 58 Q70 45 88 49 Q68 60 46 58Z"/>
+          <path d="M46 55 Q36 42 40 34 Q48 45 46 55Z"/>
+          <path d="M164 90 L168 57 L172 90Z"/><path d="M168 61 Q140 50 124 54 Q144 63 168 61Z"/><path d="M168 61 Q194 48 212 52 Q192 64 168 61Z"/>
+          <path d="M300 90 L304 55 L308 90Z"/><path d="M304 59 Q278 48 262 52 Q282 61 304 59Z"/><path d="M304 59 Q330 46 348 50 Q328 62 304 59Z"/>
+          <path d="M304 56 Q296 44 300 36 Q306 46 304 56Z"/>
+        </g>
+        <g stroke="#88703f" stroke-width="1" opacity=".55">
+          <path d="M8 88 L10 78"/><path d="M30 89 L31 77"/><path d="M54 88 L56 79"/><path d="M80 89 L81 76"/><path d="M112 88 L114 78"/>
+          <path d="M140 89 L141 77"/><path d="M182 88 L184 79"/><path d="M214 89 L216 76"/><path d="M248 88 L249 78"/><path d="M282 89 L284 77"/>
+          <path d="M324 88 L326 79"/><path d="M356 89 L358 76"/><path d="M386 88 L388 78"/>
+        </g>
+        <g>
+          <path d="M146 90 L183 64 L217 64 L254 90Z" fill="#b06c35"/>
+          <path d="M156 90 L188 66 L196 66 L172 90Z" fill="#8a522b" opacity=".75"/>
+          <path d="M244 90 L212 66 L220 66 L252 90Z" fill="#8a522b" opacity=".75"/>
+          <path d="M199 64 L203 64 L210 90 L205 90Z" fill="#d6b074" opacity=".4"/>
+          <path d="M172 76 L194 80 M228 76 L206 80" stroke="#6e4726" stroke-width="1.2" opacity=".5"/>
+          <path d="M188 66 Q196 78 192 90 M214 66 Q206 78 210 90" stroke="#e0bd80" stroke-width="1" fill="none" opacity=".25"/>
+        </g>
+        <rect y="84" width="400" height="6" fill="#4a3a23"/>
+        <rect y="60" width="400" height="22" fill="#f4d9a4" opacity=".06"/>
       </svg>`;
     }
     return `
@@ -237,6 +363,13 @@ export class UI {
         <g fill="#f2f7fa" opacity=".8">
           <path d="M33 49 L26 63 L40 63Z"/><path d="M54 39 L46 55 L62 55Z"/>
           <path d="M173 34 L164 51 L182 51Z"/><path d="M319 38 L310 55 L328 55Z"/>
+        </g>
+        <g>
+          <path d="M150 90 L183 65 L217 65 L250 90Z" fill="#e8f1f7"/>
+          <path d="M158 90 L188 67 L196 67 L172 90Z" fill="#b7c9d7" opacity=".55"/>
+          <path d="M242 90 L212 67 L220 67 L248 90Z" fill="#b7c9d7" opacity=".55"/>
+          <path d="M164 74 L190 78 M236 74 L210 78" stroke="#a6bbcc" stroke-width="1.2" opacity=".5"/>
+          <path d="M148 90 L181 65 M252 90 L219 65" stroke="#f8fcff" stroke-width="2" opacity=".7"/>
         </g>
         <rect y="83" width="400" height="7" fill="#eef4f8"/>
         <g fill="#ffffff" opacity=".55">
@@ -292,7 +425,7 @@ export class UI {
         </div>
         <div class="stage-body">
           <div>
-            <div class="stage-name">${stage.name}</div>
+            <div class="stage-name">${stage.cardName || stage.name}</div>
             <div class="stage-sub">${stage.subtitle}</div>
           </div>
           <div class="stage-right">
@@ -314,12 +447,24 @@ export class UI {
     const car = this.selectedCar;
     const stage = this.selectedStage;
     const metrics = getStageMetrics(stage);
+    const endless = this.selectedEndless;
     $$('.car-card', this.dom.carList).forEach((el) => {
       el.classList.toggle('selected', el.dataset.car === car.id);
     });
     $$('.stage-card', this.dom.stageList).forEach((el) => {
       el.classList.toggle('selected', el.dataset.stage === stage.id);
+      const len = el.querySelector('.stage-len');
+      if (len) {
+        len.textContent = endless
+          ? '∞'
+          : `${getStageMetrics(getStage(el.dataset.stage)).km} KM`;
+      }
     });
+    if (this.dom.stageMode) {
+      $$('button', this.dom.stageMode).forEach((el) => {
+        el.classList.toggle('active', el.dataset.mode === this.selectedMode);
+      });
+    }
 
     const d = carDerived(car);
     this.dom.carSpec.innerHTML = `
@@ -360,8 +505,8 @@ export class UI {
 
     const biome = BIOME_LABEL[stage.biome];
     this.dom.stageDetail.innerHTML = `
-      <div><div class="dlabel">LENGTH</div><div class="dval">${metrics.km} KM</div></div>
-      <div><div class="dlabel">TARGET</div><div class="dval">${formatTime(metrics.target)}</div></div>
+      <div><div class="dlabel">LENGTH</div><div class="dval">${endless ? '∞ ENDLESS' : metrics.km + ' KM'}</div></div>
+      <div><div class="dlabel">TARGET</div><div class="dval">${endless ? 'FREE RUN' : formatTime(metrics.target)}</div></div>
       <div><div class="dlabel">SURFACE</div><div class="dval">${stage.env.surfaceName}</div></div>
       <div><div class="dlabel">DIFFICULTY</div><div class="dval">${stage.difficultyLabel}</div></div>
       <div class="dwide"><span class="dlabel">ROAD NOTE</span><span class="dval">${stage.env.hint}</span></div>`;
@@ -372,13 +517,21 @@ export class UI {
       <span>GEARBOX</span><b>6-SPEED</b>
       <span>HOMOLOGATION</span><b>${car.year}</b>`;
     const cond = resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
-    const hazardCount = stage.biome === 'jungle' ? 7 : 5;
-    const rec = stage.biome === 'snow' ? 'STUDS' : stage.biome === 'jungle' ? 'WET' : 'GRAVEL';
+    const hazardCount = endless ? 'RANDOM'
+      : (stage.hazardCount || (stage.biome === 'jungle' ? 7 : 5));
+    const rec = stage.tyre || (stage.biome === 'snow' ? 'STUDS'
+      : stage.biome === 'jungle' || stage.biome === 'japan' ? 'WET'
+        : stage.biome === 'safari' ? 'DIRT' : 'GRAVEL');
     this.dom.stageIntel.innerHTML = `
       <div><span>WEATHER</span><b id="intel-weather">${cond.weatherLabel} / ${cond.timeLabel}</b></div>
       <div><span>HAZARD ZONES</span><b>${hazardCount}</b></div>
       <div><span>TYRE CALL</span><b>${rec}</b></div>`;
-    this.dom.startMeta.textContent = `${stage.ss} · ${stage.name} · ${biome}`;
+    this.dom.startMeta.textContent = endless
+      ? `∞ ENDLESS · ${stage.name} · ${biome}`
+      : `${stage.ss} · ${stage.name} · ${biome}`;
+    if (this.dom.startLabel) {
+      this.dom.startLabel.textContent = endless ? 'ENDLESS RUN' : 'START STAGE';
+    }
     this._refreshBest();
     this._saveSelection();
     this._updateConditionLine();
@@ -386,6 +539,11 @@ export class UI {
   }
 
   _refreshBest() {
+    if (this.selectedEndless) {
+      const best = getEndlessBest(this.selectedStageId, this.selectedCarId);
+      this.dom.best.textContent = best ? `${(best / 1000).toFixed(2)} KM` : '-- KM';
+      return;
+    }
     const best = getBest(this.selectedStageId, this.selectedCarId);
     this.dom.best.textContent = best ? formatTime(best) : '--:--.--';
   }
@@ -400,6 +558,12 @@ export class UI {
     if (!getStage(id)) return;
     this.selectedStageId = id;
     this._syncSelection();
+  }
+
+  selectMode(mode) {
+    this.selectedMode = mode === 'endless' ? 'endless' : 'stage';
+    this._syncSelection();
+    this._refreshBest();
   }
 
   /* ============================================================
@@ -461,8 +625,16 @@ export class UI {
     this.dom.startBtn.addEventListener('click', () => {
       this._click();
       if (this.dom.startBtn.disabled) return;
-      this.onStart?.(this.selectedCar, this.selectedStage);
+      this.onStart?.(this.selectedCar, this.selectedStage, this.selectedEndless);
     });
+    if (this.dom.stageMode) {
+      this.dom.stageMode.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-mode]');
+        if (!btn) return;
+        this._click();
+        this.selectMode(btn.dataset.mode);
+      });
+    }
     $('#btn-settings-close').addEventListener('click', () => this.closeSettings());
     $('#btn-settings-done').addEventListener('click', () => this.closeSettings());
     $('#btn-help-close').addEventListener('click', () => this.closeHelp());
@@ -508,6 +680,7 @@ export class UI {
       });
     };
     bind('#set-quality', 'quality');
+    bind('#set-shaders', 'shaders');
     bind('#set-volume', 'volume', (el) => parseInt(el.value, 10) / 100);
     bind('#set-voice', 'voice', (el) => el.checked);
     bind('#set-weather', 'weatherFx', (el) => el.checked);
@@ -558,6 +731,7 @@ export class UI {
 
   _syncSettingsForm() {
     $('#set-quality').value = this.settings.quality;
+    $('#set-shaders').value = ['vivid', 'cinematic'].includes(this.settings.shaders) ? this.settings.shaders : 'off';
     $('#set-volume').value = Math.round(this.settings.volume * 100);
     $('#set-voice').checked = !!this.settings.voice;
     $('#set-weather').checked = !!this.settings.weatherFx;
@@ -634,7 +808,8 @@ export class UI {
     this.dom.pause.classList.add('hidden');
     this.dom.countdown.classList.add('hidden');
     this.dom.loading.classList.remove('hidden');
-    this.dom.loadingKicker.textContent = `${stage.ss} // ${stage.name} // ${BIOME_LABEL[stage.biome]}`;
+    const tag = stage.endless ? '∞ ENDLESS' : stage.ss;
+    this.dom.loadingKicker.textContent = `${tag} // ${stage.name} // ${BIOME_LABEL[stage.biome]}`;
     this.dom.loadingCar.textContent = conditions
       ? `${car.name} · ${car.layout} · ${conditions.weatherLabel} · ${conditions.timeLabel}`
       : `${car.name} · ${car.layout} · ${car.tyre}`;
@@ -654,7 +829,7 @@ export class UI {
   showCountdown(n, stage) {
     this.dom.countdown.classList.remove('hidden');
     if (stage) {
-      this.dom.countdownSs.textContent = stage.ss;
+      this.dom.countdownSs.textContent = stage.endless ? '∞ ENDLESS' : stage.ss;
       this.dom.countdownName.textContent = stage.name;
     }
     const num = this.dom.countdownNum;
