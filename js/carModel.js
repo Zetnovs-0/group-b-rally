@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { makeCanvasTexture, beamMesh } from './util.js';
+import { makeCanvasTexture, beamMesh, mergeGeometries } from './util.js';
 import { makeSideDecal, makeHoodDecal, makeGrimeTexture } from './textures.js';
 
 /* ============================================================
@@ -52,11 +52,24 @@ function quad(points, mat, uvs = null) {
 }
 
 function makeScreen(canvas, w, h, mountPos, tiltX = -0.34, bezel = true) {
-  const tex = new THREE.CanvasTexture(canvas);
+  // Draw the trip computer at its native resolution, then upload a half-size
+  // copy. The screen occupies a few centimetres of the cockpit; the full-size
+  // texture upload was pure cost and caused visible render hitches.
+  const display = document.createElement('canvas');
+  display.width = Math.max(2, Math.round(canvas.width * 0.5));
+  display.height = Math.max(2, Math.round(canvas.height * 0.5));
+  const displayCtx = display.getContext('2d');
+  displayCtx.imageSmoothingEnabled = true;
+  const tex = new THREE.CanvasTexture(display);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.anisotropy = 4;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
+  const present = () => {
+    displayCtx.clearRect(0, 0, display.width, display.height);
+    displayCtx.drawImage(canvas, 0, 0, display.width, display.height);
+    tex.needsUpdate = true;
+  };
   const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
   const mount = new THREE.Group();
   mount.position.copy(mountPos);
@@ -79,7 +92,66 @@ function makeScreen(canvas, w, h, mountPos, tiltX = -0.34, bezel = true) {
   const gl = new THREE.Mesh(new THREE.PlaneGeometry(w, h), glassMat);
   gl.position.z = 0.004;
   tilt.add(gl);
-  return { mount, tilt, plane, tex, mat, canvas, w, h };
+  return { mount, tilt, plane, tex, mat, canvas, display, present, w, h };
+}
+
+/* ============================================================
+   Static mesh consolidation
+   The car is assembled from hundreds of small box/cylinder meshes.
+   They look right, but each one is a draw call (and another one in
+   the shadow pass). Baking all non-animated parts into one mesh per
+   material keeps the exact geometry while cutting the car from ~235
+   draws down to a handful.
+   ============================================================ */
+function mergeStaticCarMeshes(root, skipRoots) {
+  if (!root) return;
+  root.updateMatrixWorld(true);
+  const invRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const buckets = new Map();
+  const meshes = [];
+  root.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  const skipped = (mesh) => {
+    let p = mesh.parent;
+    while (p && p !== root) {
+      if (skipRoots.has(p)) return true;
+      p = p.parent;
+    }
+    return false;
+  };
+  for (const mesh of meshes) {
+    if (mesh === root || skipped(mesh)) continue;
+    if (!mesh.geometry || !mesh.material || Array.isArray(mesh.material)) continue;
+    const rel = new THREE.Matrix4().multiplyMatrices(invRoot, mesh.matrixWorld);
+    let geo = mesh.geometry.clone();
+    geo.applyMatrix4(rel);
+    if (geo.index) geo = geo.toNonIndexed();
+    const attrKey = Object.keys(geo.attributes).sort().join(',');
+    const key = mesh.material.uuid + '|' + attrKey;
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { material: mesh.material, items: [] };
+      buckets.set(key, bucket);
+    }
+    bucket.items.push({ mesh, geo });
+  }
+  for (const bucket of buckets.values()) {
+    // Single-part buckets are cheaper left alone; merging one geometry just
+    // creates a second copy for no draw-call saving.
+    if (bucket.items.length < 2) {
+      for (const item of bucket.items) item.geo.dispose();
+      continue;
+    }
+    const merged = mergeGeometries(bucket.items.map((x) => x.geo));
+    for (const item of bucket.items) {
+      item.geo.dispose();
+      if (item.mesh.parent) item.mesh.parent.remove(item.mesh);
+    }
+    const mesh = new THREE.Mesh(merged, bucket.material);
+    mesh.name = 'car-static';
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    root.add(mesh);
+  }
 }
 
 /* ============================================================
@@ -775,6 +847,32 @@ export function createCarModel(car, options = {}) {
     pace: { ...pace, ctx: paceCanvas.getContext('2d') },
     gauge: { ...gauge, ctx: gaugeCanvas.getContext('2d') },
   };
+
+  // Keep animated / swap-visible pieces as separate objects. Everything else
+  // is batched by material without changing a single triangle.
+  const skipRoots = new Set([
+    wheelSpinGroup, gearMount, brakeMount, coDriver, headRig, wiperGroup,
+    ...wheels.map((w) => w.pivot),
+    ...exteriorBits,
+    ...Object.values(screens).map((s) => s.mount),
+  ]);
+  mergeStaticCarMeshes(group, skipRoots);
+  // The animated assemblies still contain several static sub-parts each.
+  // Merge those inside their own rigid pivot so wheel/steering/co-driver
+  // animation is untouched while draw calls fall further.
+  for (const w of wheels) {
+    mergeStaticCarMeshes(w.pivot, new Set([w.spin]));
+    mergeStaticCarMeshes(w.spin, new Set());
+  }
+  mergeStaticCarMeshes(wheelSpinGroup, new Set());
+  mergeStaticCarMeshes(gearMount, new Set());
+  mergeStaticCarMeshes(brakeMount, new Set());
+  const headAndBook = new Set([head, notebook]);
+  mergeStaticCarMeshes(coDriver, headAndBook);
+  mergeStaticCarMeshes(head, new Set());
+  mergeStaticCarMeshes(notebook, new Set());
+  for (const w of wipers) mergeStaticCarMeshes(w.pivot, new Set());
+  for (const s of Object.values(screens)) mergeStaticCarMeshes(s.mount, new Set());
 
   const info = {
     group, interior, body, screens,

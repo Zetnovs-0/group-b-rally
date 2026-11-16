@@ -86,6 +86,10 @@ export class Game {
     this.chasePos = new THREE.Vector3();
     this.chaseReady = false;
     this.flashPulse = 0;
+    this._basePixelRatio = 1;
+    this._renderScale = 1;
+    this._adaptiveTimer = 0;
+    this._scaleUpTimer = 0;
     this.touch = null;
     this.time = 0;
     this.bestTime = null;
@@ -202,10 +206,41 @@ export class Game {
     const q = this.settings.quality;
     const cap = q === 'high' ? Math.min(window.devicePixelRatio || 1, 1.8)
       : q === 'medium' ? Math.min(window.devicePixelRatio || 1, 1.35) : 1;
-    this.renderer.setPixelRatio(cap);
+    this._basePixelRatio = cap;
+    this._applyPixelRatio();
     this.renderer.shadowMap.enabled = q !== 'low';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  }
+
+  _applyPixelRatio() {
+    const scale = this._renderScale || 1;
+    this.renderer.setPixelRatio(Math.max(0.5, this._basePixelRatio * scale));
     this._resizePostFX();
+  }
+
+  /** Dynamic resolution only. Object geometry, shadows and draw distance stay
+   *  exactly the same; if the GPU is struggling we render the same scene at a
+   *  slightly lower internal resolution instead of dropping detail. */
+  _adaptResolution(dt) {
+    if (this.state !== 'racing' || !this.fps) return;
+    this._adaptiveTimer += dt;
+    if (this._adaptiveTimer < 2.5) return;
+    this._adaptiveTimer = 0;
+    const scale = this._renderScale || 1;
+    if (this.fps < 50 && scale > 0.7) {
+      this._renderScale = Math.max(0.7, scale - 0.07);
+      this._scaleUpTimer = 0;
+      this._applyPixelRatio();
+    } else if (this.fps > 57 && scale < 1) {
+      this._scaleUpTimer += 2.5;
+      if (this._scaleUpTimer >= 8) {
+        this._renderScale = Math.min(1, scale + 0.05);
+        this._scaleUpTimer = 0;
+        this._applyPixelRatio();
+      }
+    } else {
+      this._scaleUpTimer = 0;
+    }
   }
 
   _onSettingsChanged(settings) {
@@ -652,6 +687,7 @@ export class Game {
     this.track.updateSun(this.physics.pos, dt);
     this.audio.update(dt, this._audioState());
     this.renderScene();
+    this._adaptResolution(dt);
 
     if (this.physics.finished && this.state === 'racing') {
       this._startFinish();
@@ -711,9 +747,22 @@ export class Game {
     this.carRoot.position.set(p.pos.x, p.pos.y + bump, p.pos.z);
     this.carRoot.rotation.order = 'YXZ';
     this.carRoot.rotation.set(p.pitch, p.yaw, p.roll);
-    const spin = p.wheelRotation;
-    for (const w of this.carModel.wheelSpin) w.rotation.x = spin;
-    for (const piv of this.carModel.frontPivots) piv.rotation.y = p.steer;
+    const spins = this.carModel.wheelSpin;
+    const angles = p.wheelAngle;
+    for (let i = 0; i < spins.length; i++) {
+      spins[i].rotation.x = angles ? angles[i] : p.wheelRotation;
+    }
+    const fronts = this.carModel.frontPivots;
+    for (let i = 0; i < fronts.length; i++) {
+      fronts[i].rotation.y = p.wheelSteer ? p.wheelSteer[i] : p.steer;
+    }
+    // Visible suspension travel: the wheel centres move relative to the body
+    // as the four contact patches rise and fall.
+    const wheelPivots = this.carModel.wheels;
+    for (let i = 0; i < wheelPivots.length; i++) {
+      const travel = p.wheelTravel ? p.wheelTravel[i] : 0;
+      wheelPivots[i].pivot.position.y = 0.335 + travel;
+    }
     this.carRoot.updateMatrixWorld(true);
   }
 

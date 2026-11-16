@@ -50,6 +50,245 @@ function rngBridge(n) {
 }
 
 /* ============================================================
+   SCENERY BATCHING
+   Endless scenery used to create one InstancedMesh per tree/detail
+   type per streamed tile. With ~60 tiles that was ~600 draw calls
+   just for vegetation. These batches pool every tile/chunk instance
+   that shares a geometry and material into one global InstancedMesh,
+   preserving the exact same geometry while removing the draw-call
+   explosion. Tiles still own their entries, so streaming disposal and
+   destructible trees keep working.
+   ============================================================ */
+const BATCH_TMP = new THREE.Object3D();
+const BATCH_WHITE = new THREE.Color(1, 1, 1);
+// Spatial bucket size for pooled scenery. Big enough to keep draw calls low,
+// small enough that off-screen vegetation can still be frustum-culled.
+const BATCH_CELL = 1024;
+const BATCH_HIDDEN = new Float32Array(16);
+{
+  const m = new THREE.Matrix4();
+  m.compose(
+    new THREE.Vector3(0, -9999, 0),
+    new THREE.Quaternion(),
+    new THREE.Vector3(0.0001, 0.0001, 0.0001)
+  );
+  m.toArray(BATCH_HIDDEN);
+}
+
+class SceneryBatchHandle extends THREE.Object3D {
+  constructor(entries) {
+    super();
+    this.isSceneryBatchHandle = true;
+    this.entries = entries;
+  }
+
+  set castShadow(v) {
+    if (!this.entries) return;
+    for (const e of this.entries) {
+      if (e.batch) e.batch.castShadow = !!v || e.batch.castShadow;
+      if (e.batch) e.batch.flagsDirty = true;
+    }
+  }
+
+  get castShadow() { return false; }
+
+  set receiveShadow(v) {
+    if (!this.entries) return;
+    for (const e of this.entries) {
+      if (e.batch) e.batch.receiveShadow = !!v || e.batch.receiveShadow;
+      if (e.batch) e.batch.flagsDirty = true;
+    }
+  }
+
+  get receiveShadow() { return false; }
+
+  hide(index) {
+    const entry = this.entries[index];
+    if (!entry || entry.hidden || !entry.batch) return;
+    entry.hidden = true;
+    entry.batch.dirty = true;
+    entry.batch.manager.flush();
+  }
+
+  // Legacy callers (breakCollider) set a zero matrix directly.
+  setMatrixAt(index) { this.hide(index); }
+
+  get instanceMatrix() {
+    return { needsUpdate: false };
+  }
+}
+
+class SceneryBatch {
+  constructor(manager, geo, mat, cellX, cellZ) {
+    this.manager = manager;
+    this.geo = geo;
+    this.mat = mat;
+    this.cellX = cellX;
+    this.cellZ = cellZ;
+    this.entries = [];
+    this.mesh = null;
+    this.capacity = 0;
+    this.dirty = false;
+    this.flagsDirty = false;
+    this.castShadow = false;
+    this.receiveShadow = true;
+  }
+
+  _ensureCapacity(cap) {
+    if (this.mesh && this.capacity >= cap) return;
+    // Grow in doubles rather than 20% steps. Instanced buffers are cheap
+    // compared with repeatedly reallocating and re-uploading them as tiles
+    // stream in.
+    const next = Math.max(256, 2 ** Math.ceil(Math.log2(Math.max(4, Math.ceil(cap * 2)))));
+    const old = this.mesh;
+    const mesh = new THREE.InstancedMesh(this.geo, this.mat, next);
+    mesh.name = `scenery-batch:${this.cellX},${this.cellZ}`;
+    mesh.frustumCulled = true;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Allocate an instance-colour buffer even when a caller has no per-item
+    // tint, so every batch has the same shader path.
+    mesh.setColorAt(0, BATCH_WHITE);
+    if (mesh.instanceColor) mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    mesh.count = 0;
+    mesh.castShadow = this.castShadow;
+    mesh.receiveShadow = this.receiveShadow;
+    this.manager.scene.add(mesh);
+    if (old) {
+      this.manager.scene.remove(old);
+      old.dispose();
+    }
+    this.mesh = mesh;
+    this.capacity = next;
+  }
+
+  flush() {
+    if (!this.dirty && !this.flagsDirty) return;
+    this._ensureCapacity(this.entries.length);
+    const mesh = this.mesh;
+    if (!mesh) return;
+    if (this.flagsDirty) {
+      mesh.castShadow = this.castShadow;
+      mesh.receiveShadow = this.receiveShadow;
+      this.flagsDirty = false;
+    }
+    const matArray = mesh.instanceMatrix.array;
+    for (let i = 0; i < this.entries.length; i++) {
+      const e = this.entries[i];
+      e.slot = i;
+      if (e.hidden || e.removed) {
+        matArray.set(BATCH_HIDDEN, i * 16);
+      } else {
+        matArray.set(e.matrix, i * 16);
+      }
+      if (mesh.instanceColor) {
+        const c = e.color || BATCH_WHITE;
+        mesh.instanceColor.array[i * 3] = c.r;
+        mesh.instanceColor.array[i * 3 + 1] = c.g;
+        mesh.instanceColor.array[i * 3 + 2] = c.b;
+      }
+    }
+    mesh.count = this.entries.length;
+    mesh.visible = this.entries.length > 0;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (mesh.count > 0) mesh.computeBoundingSphere();
+    this.dirty = false;
+  }
+}
+
+class SceneryBatcher {
+  constructor(track, scene) {
+    this.track = track;
+    this.scene = scene;
+    this.batches = new Map();
+  }
+
+  add(geo, mat, items, colorFn, owner) {
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+      const t = items[i];
+      const cellX = Math.floor(t.x / BATCH_CELL);
+      const cellZ = Math.floor(t.z / BATCH_CELL);
+      const key = cellX + ',' + cellZ + ':' + geo.uuid + ':' + mat.uuid;
+      let batch = this.batches.get(key);
+      if (!batch) {
+        batch = new SceneryBatch(this, geo, mat, cellX, cellZ);
+        this.batches.set(key, batch);
+      }
+      BATCH_TMP.position.set(t.x, t.y, t.z);
+      BATCH_TMP.rotation.set(t.tiltX || 0, t.rot ?? t.ry ?? 0, t.tiltZ || t.tilt || 0);
+      BATCH_TMP.scale.set(
+        t.sx ?? t.sxz ?? t.scale ?? 1,
+        t.sy ?? t.scale ?? 1,
+        t.sz ?? t.sxz ?? t.scale ?? 1,
+      );
+      BATCH_TMP.updateMatrix();
+      const matrix = new Float32Array(16);
+      BATCH_TMP.matrix.toArray(matrix);
+      const entry = {
+        matrix,
+        color: colorFn ? new THREE.Color(colorFn(i, t)) : null,
+        hidden: false,
+        removed: false,
+        owner: owner || null,
+        batch,
+        slot: batch.entries.length,
+      };
+      batch.entries.push(entry);
+      entries.push(entry);
+    }
+    for (const e of entries) e.batch.dirty = true;
+    return new SceneryBatchHandle(entries);
+  }
+
+  removeOwner(owner) {
+    if (!owner) return;
+    let changed = false;
+    const empty = [];
+    for (const [key, batch] of this.batches) {
+      let hit = false;
+      for (const e of batch.entries) {
+        if (e.owner === owner) { hit = true; break; }
+      }
+      if (!hit) continue;
+      batch.entries = batch.entries.filter((e) => {
+        if (e.owner === owner) {
+          e.removed = true;
+          return false;
+        }
+        return true;
+      });
+      batch.dirty = true;
+      changed = true;
+      if (!batch.entries.length) empty.push([key, batch]);
+    }
+    for (const [key, batch] of empty) {
+      if (batch.mesh) {
+        this.scene.remove(batch.mesh);
+        batch.mesh.dispose();
+      }
+      this.batches.delete(key);
+    }
+    if (changed) this.flush();
+  }
+
+  flush() {
+    for (const batch of this.batches.values()) batch.flush();
+  }
+
+  dispose() {
+    for (const batch of this.batches.values()) {
+      if (batch.mesh) {
+        this.scene.remove(batch.mesh);
+        batch.mesh.dispose();
+      }
+      batch.entries.length = 0;
+    }
+    this.batches.clear();
+  }
+}
+
+/* ============================================================
    Stage metrics (shared with the menu)
    ============================================================ */
 const metricsCache = new Map();
@@ -115,6 +354,17 @@ export class Track {
     this.terrainTileStep = 3.2;
     this.terrainTileRadius = 3;
     this._terrainTilesReady = false;
+    // Terrain construction is time-sliced: a 128 m tile is ~1,700 vertices and
+    // used to arrive in one 20-35 ms frame. Rows now stream over a few frames.
+    this._terrainBuildQueue = [];
+    this._terrainBuildActive = null;
+    this._terrainHint = -1;
+    this._interpSample = {
+      pos: new THREE.Vector3(),
+      right: new THREE.Vector3(),
+      i: 0,
+      dist: 0,
+    };
 
     // Static prop collisions. Colliders live in a spatial hash so the car can
     // hit trees/rocks anywhere in the world without an O(n) scan every step.
@@ -462,6 +712,7 @@ export class Track {
     // Terrain is streamed in a square grid around the car, not along the road.
     // This guarantees ground exists off-road everywhere the player can see.
     this.updateTerrainTiles(pos);
+    this._ensureChunkScenery(dist);
   }
 
   _hazardTableForBiome(biome) {
@@ -615,6 +866,10 @@ export class Track {
     for (const part of c.parts || []) {
       const mesh = part.mesh;
       if (!mesh) continue;
+      if (mesh.isSceneryBatchHandle) {
+        mesh.hide(part.index);
+        continue;
+      }
       TMP.position.set(0, -9999, 0);
       TMP.rotation.set(0, 0, 0);
       TMP.scale.setScalar(0.0001);
@@ -832,13 +1087,33 @@ export class Track {
       }
     }
     if (best < 0) best = 0;
-    const aS = this.samples[best];
-    const bS = this.samples[Math.min(n - 1, best + 1)];
-    const ax = aS.pos.x, az = aS.pos.z;
-    const bx = bS.pos.x, bz = bS.pos.z;
-    const ex = bx - ax, ez = bz - az;
-    const el2 = ex * ex + ez * ez || 1;
-    const t = clamp(((pos.x - ax) * ex + (pos.z - az) * ez) / el2, 0, 1);
+    // Pick the nearest *segment*, not just the nearest sample. Using the
+    // sample-clamped projection made the height field jump by half a sample's
+    // elevation where the closest sample changed; on a tight uphill stage the
+    // steep-face guard read that as a vertical wall.
+    let segStart = best;
+    let segT = 0;
+    let bestSegD = Infinity;
+    for (let i = best - 1; i <= best; i++) {
+      if (i < 0 || i >= n - 1) continue;
+      const a = this.samples[i];
+      const b = this.samples[i + 1];
+      const ex = b.pos.x - a.pos.x;
+      const ez = b.pos.z - a.pos.z;
+      const el2 = ex * ex + ez * ez || 1;
+      const tt = clamp(((pos.x - a.pos.x) * ex + (pos.z - a.pos.z) * ez) / el2, 0, 1);
+      const px = a.pos.x + ex * tt;
+      const pz = a.pos.z + ez * tt;
+      const d2 = (pos.x - px) * (pos.x - px) + (pos.z - pz) * (pos.z - pz);
+      if (d2 < bestSegD) {
+        bestSegD = d2;
+        segStart = i;
+        segT = tt;
+      }
+    }
+    const aS = this.samples[segStart];
+    const bS = this.samples[Math.min(n - 1, segStart + 1)];
+    const t = segT;
     const center = new THREE.Vector3(
       lerp(aS.pos.x, bS.pos.x, t),
       lerp(aS.pos.y, bS.pos.y, t),
@@ -849,19 +1124,40 @@ export class Track {
     const dx = pos.x - center.x, dz = pos.z - center.z;
     const lateral = dx * right.x + dz * right.z;
     const absLat = Math.abs(lateral);
-    const nearIdx = t > 0.5 ? Math.min(n - 1, best + 1) : best;
+    const nearIdx = t > 0.5 ? Math.min(n - 1, segStart + 1) : segStart;
     const dist = lerp(aS.dist, bS.dist, t);
     const grip = lerp(aS.grip, bS.grip, t);
     const offRoad = absLat > this.halfWidth + 0.65;
     const surfaceName = (t > 0.5 ? bS : aS).surfaceName;
     const hazard = (t > 0.5 ? bS : aS).hazard;
     const hazardLabel = (t > 0.5 ? bS : aS).hazardLabel;
-    if (!offRoad) this.lastIndexHint = best;
+    if (!offRoad) this.lastIndexHint = nearIdx;
+    let height;
+    if (absLat <= this.halfWidth + 0.25) {
+      height = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset + this.roadCrown(lateral);
+    } else {
+      // Evaluate the terrain field on the interpolated route frame instead of
+      // switching between two samples at t = 0.5.
+      const scratch = this._interpSample;
+      scratch.pos.copy(center);
+      scratch.right.copy(right);
+      scratch.i = nearIdx;
+      scratch.dist = dist;
+      const wx = center.x + right.x * lateral;
+      const wz = center.z + right.z * lateral;
+      if (this.endless && Math.abs(lateral) > this.halfWidth + 2.5) {
+        height = this._smoothEndlessHeight(scratch, lateral) + 0.015;
+      } else {
+        height = this._heightAtFrame(
+          scratch, lateral, wx, wz, this._terrainNoise(wx, wz),
+        ) + 0.015;
+      }
+    }
     return {
-      index: best, nearIndex: nearIdx, t, center, tangent, right, lateral, absLat,
+      index: nearIdx, nearIndex: nearIdx, t, center, tangent, right, lateral, absLat,
       dist, progress: clamp(dist / this.length, 0, 1), grip, offRoad, hazard, hazardLabel,
       surfaceName, heading: Math.atan2(tangent.x, tangent.z),
-      height: this.surfaceHeight(nearIdx, lateral),
+      height,
       sample: t > 0.5 ? bS : aS,
     };
   }
@@ -930,11 +1226,99 @@ export class Track {
 
   /** Smooth, deterministic side bias used to give mountain passes an uphill
    *  wall and a valley side that swap gradually over the length of a stage. */
-  mountainSideAt(dist) {
-    const b = Math.sin(dist * 0.0042 + this.seed * 0.0011) * 0.9 +
+  mountainBiasAt(dist) {
+    return Math.sin(dist * 0.0042 + this.seed * 0.0011) * 0.9 +
       Math.sin(dist * 0.00135 + 2.15) * 0.42 +
       Math.sin(dist * 0.0105 + 0.7) * 0.16;
-    return b >= 0 ? -1 : 1; // side that rises
+  }
+
+  mountainSideAt(dist) {
+    return this.mountainBiasAt(dist) >= 0 ? -1 : 1; // side that rises
+  }
+
+  _terrainNoise(wx, wz) {
+    return {
+      n1: fbm(wx * 0.041, wz * 0.041, this.seed),
+      n2: fbm(wx * 0.012, wz * 0.012, this.seed + 15),
+      // The old 8.7 m noise was sampled on a 3.2 m grid and read as sharp
+      // sawteeth. A broader, lower-amplitude octave keeps the hills alive
+      // without the jagged micro-relief.
+      n3: fbm(wx * 0.052, wz * 0.052, this.seed + 31),
+    };
+  }
+
+  /** Height for one route cross-section. Shared noise lets the endless
+   *  smoothing pass evaluate several neighbouring cross-sections cheaply. */
+  _heightAtFrame(s, lateral, wx, wz, noise) {
+    const absLat = Math.abs(lateral);
+    const d = Math.max(0, absLat - this.halfWidth);
+    if (d < 0.45) return s.pos.y - 0.09;
+    const t = this.terrainProfile();
+    const rough = t.roughness ?? 1;
+    const n1 = noise.n1;
+    const n2 = noise.n2;
+    const n3 = noise.n3;
+    const slope = this.sideSlope[s.i] || 0;
+    const ditch = -t.ditch * smoothstep(0.35, 2.4, d) * (1 - smoothstep(2.6, 6.4, d));
+    let y = s.pos.y - 0.15 + ditch;
+
+    if (t.style === 'mountain') {
+      // Blend the uphill / valley sides instead of flipping them at a hard
+      // sign change. Without this, every mountain-side transition produced a
+      // vertical seam across the whole streamed terrain tile.
+      const bias = this.mountainBiasAt(s.dist);
+      const sideSign = lateral >= 0 ? 1 : -1;
+      const up = smoothstep(-0.4, 0.4, -bias * sideSign);
+      const rise = smoothstep(0.8, 4.5, d) * (0.22 * t.bank + Math.abs(slope) * 0.16) +
+        smoothstep(3.0, 34, d) * (Math.pow(d / 34, 0.95) * (9.5 * t.bank) + n1 * 2.2 + n2 * 1.5) +
+        smoothstep(36, 120, d) * (t.relief * 2.4 + n2 * 4.0 * rough);
+      const drop = smoothstep(1.2, 8, d) * (0.30 + d * 0.10) +
+        smoothstep(5, 38, d) * (Math.pow(d / 38, 1.0) * (8.0 * t.bank) + Math.abs(n1) * 1.4 + Math.abs(n2) * 2.0) +
+        smoothstep(42, 140, d) * (t.relief * 3.0 + Math.abs(n2) * 5.0 * rough);
+      return y + rise * up - drop * (1 - up);
+    }
+
+    if (t.style === 'ridge') {
+      const lift = smoothstep(1.2, 16, d) * (0.22 + n1 * 1.1 * t.bank + Math.abs(slope) * d * 0.05) +
+        smoothstep(20, 80, d) * (n2 * 4.0 * t.relief + 1.0 * t.relief) +
+        smoothstep(55, 160, d) * (n3 * 2.2 * rough);
+      return y + Math.max(-0.4, lift);
+    }
+
+    if (t.style === 'plain') {
+      const lift = smoothstep(1.8, 20, d) * (0.10 + n1 * 0.4 * t.bank + Math.abs(slope) * d * 0.014) +
+        smoothstep(32, 120, d) * (n2 * 1.8 * t.relief + 0.4 * t.relief) +
+        smoothstep(80, 190, d) * (n3 * 1.0 * rough);
+      // Wide grass banks / wind-blown snow drifts tight against the road.
+      const shoulder = smoothstep(1.0, 5.0, d) * (t.bank * 0.32 + Math.abs(n1) * 0.28 * t.bank);
+      return y + lift + shoulder;
+    }
+
+    // rolling forest
+    const lift = smoothstep(1.6, 18, d) * (0.25 + n1 * 1.05 * t.bank + Math.abs(slope) * d * 0.05) +
+      smoothstep(24, 90, d) * (n2 * 3.2 * t.relief + 0.9 * t.relief) +
+      smoothstep(60, 160, d) * (n3 * 2.0 * rough);
+    return y + Math.max(-0.35, lift);
+  }
+
+  /** Endless terrain is smoothed across neighbouring route cross-sections.
+   *  This removes the 1.7 m stair-stepping where the nearest sample changes
+   *  and keeps the streamed tile joins continuous. */
+  _smoothEndlessHeight(s, lateral) {
+    const wx = s.pos.x + s.right.x * lateral;
+    const wz = s.pos.z + s.right.z * lateral;
+    const noise = this._terrainNoise(wx, wz);
+    const offsets = [-2, -1, 0, 1, 2];
+    const weights = [1, 2, 3, 2, 1];
+    let sum = 0;
+    let wsum = 0;
+    for (let k = 0; k < offsets.length; k++) {
+      const ns = this.samples[clamp(s.i + offsets[k], 0, this.n - 1)];
+      const lat = (wx - ns.pos.x) * ns.right.x + (wz - ns.pos.z) * ns.right.z;
+      sum += this._heightAtFrame(ns, lat, wx, wz, noise) * weights[k];
+      wsum += weights[k];
+    }
+    return sum / wsum;
   }
 
   heightAtSample(index, lateral) {
@@ -942,55 +1326,11 @@ export class Track {
     const absLat = Math.abs(lateral);
     const d = Math.max(0, absLat - this.halfWidth);
     if (d < 0.45) return s.pos.y - 0.09;
-    const t = this.terrainProfile();
+    // Keep the carriageway edges crisp; smooth only out in the scenery.
+    if (this.endless && d > 2.5) return this._smoothEndlessHeight(s, lateral);
     const wx = s.pos.x + s.right.x * lateral;
     const wz = s.pos.z + s.right.z * lateral;
-    const rough = t.roughness ?? 1;
-    const n1 = fbm(wx * 0.041, wz * 0.041, this.seed);
-    const n2 = fbm(wx * 0.012, wz * 0.012, this.seed + 15);
-    const n3 = fbm(wx * 0.115, wz * 0.115, this.seed + 31);
-    const slope = this.sideSlope[s.i] || 0;
-    const ditch = -t.ditch * smoothstep(0.45, 2.0, d) * (1 - smoothstep(2.2, 5.2, d));
-    let y = s.pos.y - 0.15 + ditch;
-
-    if (t.style === 'mountain') {
-      const uphill = this.mountainSideAt(s.dist);
-      const isUp = sign(lateral || 1) === uphill;
-      if (isUp) {
-        const rise = smoothstep(0.7, 3.6, d) * (0.28 * t.bank + Math.abs(slope) * 0.22) +
-          smoothstep(2.2, 26, d) * (Math.pow(d / 23, 0.82) * (12.5 * t.bank) + n1 * 3.2 + n2 * 1.8) +
-          smoothstep(28, 100, d) * (t.relief * 3.2 + n2 * 6.0 * rough);
-        y += rise;
-      } else {
-        const drop = smoothstep(1.0, 7.5, d) * (0.35 + d * 0.14) +
-          smoothstep(4, 30, d) * (Math.pow(d / 28, 0.9) * (10.5 * t.bank) + n1 * 2.0 + Math.abs(n2) * 3.4) +
-          smoothstep(34, 130, d) * (t.relief * 4.2 + Math.abs(n2) * 8.0 * rough);
-        y -= drop;
-      }
-      return y;
-    }
-
-    if (t.style === 'ridge') {
-      const lift = smoothstep(1.1, 14, d) * (0.24 + n1 * 1.55 * t.bank + Math.abs(slope) * d * 0.075) +
-        smoothstep(16, 70, d) * (n2 * 5.8 * t.relief + 1.4 * t.relief) +
-        smoothstep(48, 130, d) * (n3 * 4.0 * rough);
-      return y + Math.max(-0.5, lift);
-    }
-
-    if (t.style === 'plain') {
-      const lift = smoothstep(1.6, 18, d) * (0.12 + n1 * 0.5 * t.bank + Math.abs(slope) * d * 0.018) +
-        smoothstep(28, 110, d) * (n2 * 2.2 * t.relief + 0.5 * t.relief) +
-        smoothstep(70, 170, d) * (n3 * 1.6 * rough);
-      // Wide grass banks / wind-blown snow drifts tight against the road.
-      const shoulder = smoothstep(0.8, 4.5, d) * (t.bank * 0.45 + Math.abs(n1) * 0.36 * t.bank);
-      return y + lift + shoulder;
-    }
-
-    // rolling forest
-    const lift = smoothstep(1.4, 16, d) * (0.3 + n1 * 1.4 * t.bank + Math.abs(slope) * d * 0.06) +
-      smoothstep(20, 80, d) * (n2 * 4.2 * t.relief + 1.1 * t.relief) +
-      smoothstep(55, 140, d) * (n3 * 3.3 * rough);
-    return y + Math.max(-0.5, lift);
+    return this._heightAtFrame(s, lateral, wx, wz, this._terrainNoise(wx, wz));
   }
 
   /** Bilinear sample of the (smoothed) rendered terrain height grid. */
@@ -1635,14 +1975,47 @@ export class Track {
   /** Coarser nearest-sample search for world-space terrain tiles. Terrain
    *  vertices are far more numerous than road queries, so a wider stride keeps
    *  tile construction cheap even after the endless route has grown long. */
-  _nearestWorldIndex(x, z) {
-    if (!this._worldCoarse || this._worldCoarseN !== this.n) {
+  _nearestWorldIndex(x, z, hint = null) {
+    const n = this.n;
+    if (!n) return { index: 0, distance: 0 };
+    // Terrain vertices are always near the camera, so search a window around
+    // the current route index first. The old implementation scanned the whole
+    // route history for every vertex; that got slower and slower the further
+    // an endless run went.
+    const center = hint != null ? hint : (this._terrainHint ?? -1);
+    if (center >= 0 && center < n) {
+      const span = Math.min(260, n);
+      const from = Math.max(0, center - span);
+      const to = Math.min(n - 1, center + span);
+      let best = from;
+      let bestD = Infinity;
+      for (let i = from; i <= to; i += 8) {
+        const p = this.samples[i].pos;
+        const dx = x - p.x, dz = z - p.z;
+        const d = dx * dx + dz * dz;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      const fineFrom = Math.max(from, best - 10);
+      const fineTo = Math.min(to, best + 10);
+      for (let i = fineFrom; i <= fineTo; i++) {
+        const p = this.samples[i].pos;
+        const dx = x - p.x, dz = z - p.z;
+        const d = dx * dx + dz * dz;
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      // If the winner is at the edge of the window, the nearest sample may be
+      // on a distant leg; fall through to the global search.
+      if (best > from + 8 && best < to - 8) {
+        return { index: best, distance: Math.sqrt(bestD) };
+      }
+    }
+    if (!this._worldCoarse || this._worldCoarseN !== n) {
       this._worldCoarse = [];
-      this._worldCoarseN = this.n;
+      this._worldCoarseN = n;
       const stride = 12;
-      for (let i = 0; i < this.n; i += stride) this._worldCoarse.push(i);
-      if (this._worldCoarse[this._worldCoarse.length - 1] !== this.n - 1) {
-        this._worldCoarse.push(this.n - 1);
+      for (let i = 0; i < n; i += stride) this._worldCoarse.push(i);
+      if (this._worldCoarse[this._worldCoarse.length - 1] !== n - 1) {
+        this._worldCoarse.push(n - 1);
       }
     }
     let best = 0;
@@ -1655,7 +2028,7 @@ export class Track {
       const d = dx * dx + dz * dz;
       if (d < bestD) { bestD = d; best = i; }
     }
-    for (let i = Math.max(0, best - 16); i < Math.min(this.n, best + 17); i++) {
+    for (let i = Math.max(0, best - 16); i < Math.min(n, best + 17); i++) {
       const p = this.samples[i].pos;
       const dx = x - p.x, dz = z - p.z;
       const d = dx * dx + dz * dz;
@@ -4541,13 +4914,20 @@ export class Track {
 
   _instanced(geo, mat, items, colorFn = null) {
     if (!items.length) return null;
+    if (this._sceneryBatches) {
+      return this._sceneryBatches.add(geo, mat, items, colorFn, this._batchOwner || null);
+    }
     const mesh = new THREE.InstancedMesh(geo, mat, items.length);
     items.forEach((t, i) => {
       TMP.position.set(t.x, t.y, t.z);
-      const yaw = t.rot || 0;
+      const yaw = t.rot ?? t.ry ?? 0;
       const tilt = t.tilt || 0;
       TMP.rotation.set(t.tiltX || 0, yaw, t.tiltZ || tilt);
-      TMP.scale.setScalar(t.scale || 1);
+      TMP.scale.set(
+        t.sx ?? t.sxz ?? t.scale ?? 1,
+        t.sy ?? t.scale ?? 1,
+        t.sz ?? t.sxz ?? t.scale ?? 1,
+      );
       TMP.updateMatrix();
       mesh.setMatrixAt(i, TMP.matrix);
       if (colorFn) mesh.setColorAt(i, colorFn(i, t));
@@ -5291,6 +5671,13 @@ export class Track {
     this._scene = scene;
     this._endlessQuality = quality;
     if (!this._sharedGeos) this._sharedGeos = new WeakSet();
+    this._sceneryBatches = new SceneryBatcher(this, scene);
+    // Keep scenery generation inside the useful visibility range. The road and
+    // terrain still stream much further, but vegetation beyond the fog line is
+    // invisible and should not be uploaded to the GPU.
+    const visibility = 1 / Math.max(0.004, this.env.fogDensity || 0.01);
+    this._sceneryRange = clamp(visibility * 1.8, 150, 300);
+    this._chunkSceneryRange = clamp(visibility * 2.4, 190, 400);
     this._treeAssets = this._makeTreeAssets();
     for (const asset of Object.values(this._treeAssets)) {
       for (const key of ['trunkGeo', 'leafGeo', 'solidGeo']) {
@@ -5354,21 +5741,27 @@ export class Track {
       map: warnTex, transparent: true, alphaTest: 0.25, roughness: 0.8,
       side: THREE.DoubleSide, emissive: 0xffffff, emissiveMap: warnTex, emissiveIntensity: 0.22,
     });
-    for (const g of [postGeo, capGeo]) this._sharedGeos.add(g);
-    this._postAssets = { postGeo, postMat, capGeo, capMat, warnMat };
+    const warnGeo = new THREE.PlaneGeometry(0.72, 0.72);
+    for (const g of [postGeo, capGeo, warnGeo]) this._sharedGeos.add(g);
+    this._postAssets = { postGeo, postMat, capGeo, capMat, warnMat, warnGeo };
 
     // The old endless terrain was a ribbon tied to the road. Terrain is now a
     // free 2D grid streamed around the car so the world exists off-road too.
-    this.terrainTileSize = quality === 'high' ? 96 : quality === 'medium' ? 112 : 128;
+    // Bigger tiles cover more ground with fewer draw calls. The vertex budget
+    // is essentially unchanged, while the high setting goes from 49 terrain
+    // meshes to 25 for the same view distance.
+    this.terrainTileSize = quality === 'high' ? 128 : quality === 'medium' ? 144 : 160;
     this.terrainTileStep = quality === 'high' ? 3.2 : quality === 'medium' ? 4.8 : 6.4;
-    this.terrainTileRadius = quality === 'high' ? 3 : quality === 'medium' ? 3 : 2;
+    this.terrainTileRadius = quality === 'high' ? 2 : quality === 'medium' ? 2 : 1;
     this.worldBound = 900;
     this._terrainTilesReady = true;
 
     this.roadNetwork?.attach(scene);
     this.roadNetwork?.update(this.samples[Math.min(3, this.n - 1)]?.dist || 0);
     this._buildEndlessChunks(true);
-    this.updateTerrainTiles(this.samples[Math.min(3, this.n - 1)].pos);
+    const startPos = this.samples[Math.min(3, this.n - 1)].pos;
+    this.updateTerrainTiles(startPos, true);
+    this._ensureChunkScenery(this.samples[Math.min(3, this.n - 1)].dist);
   }
 
   _buildEndlessChunks(initial = false) {
@@ -5392,20 +5785,44 @@ export class Track {
     group.name = 'endless-chunk';
     // Terrain is handled by updateTerrainTiles; chunks only carry the road,
     // roadside scenery and furniture.
+    this._batchOwner = group;
     this._addChunkRoad(group, i0, i1);
-    this._addChunkScenery(group, i0, i1);
     this._addChunkProps(group, i0, i1);
+    this._batchOwner = null;
+    this._sceneryBatches?.flush();
     this._scene.add(group);
     this.chunks.push({
       group, i0, i1,
       dist0: this.samples[i0].dist,
       dist1: this.samples[i1].dist,
+      sceneryBuilt: false,
     });
+  }
+
+  /** Plant the dense verge of a road chunk when it comes into range. The road
+   *  surface itself is still built ahead, but distant vegetation no longer
+   *  costs vertices or draw calls until it can be seen. */
+  _ensureChunkScenery(playerDist) {
+    if (!this._sceneryBatches) return;
+    const range = this._chunkSceneryRange || 260;
+    let built = 0;
+    for (const chunk of this.chunks) {
+      if (chunk.sceneryBuilt) continue;
+      if (chunk.dist1 < playerDist - range || chunk.dist0 > playerDist + range) continue;
+      this._batchOwner = chunk.group;
+      this._addChunkScenery(chunk.group, chunk.i0, chunk.i1);
+      this._batchOwner = null;
+      chunk.sceneryBuilt = true;
+      built++;
+      if (built >= 2) break;
+    }
+    if (built) this._sceneryBatches.flush();
   }
 
   _disposeChunk(chunk) {
     if (!this._scene || !chunk) return;
     this._removeCollidersForOwner(chunk.group);
+    this._sceneryBatches?.removeOwner(chunk.group);
     this._scene.remove(chunk.group);
     chunk.group.traverse((obj) => {
       if (obj.isMesh && obj.geometry && !this._sharedGeos.has(obj.geometry)) {
@@ -5434,35 +5851,66 @@ export class Track {
     const cx = Math.floor(pos.x / size);
     const cz = Math.floor(pos.z / size);
     const radius = this.terrainTileRadius;
+    this._terrainHint = this.nearest(pos, this.lastIndexHint).index;
     for (const [key, tile] of this.terrainTiles) {
-      if (Math.abs(tile.cx - cx) > radius + 1 || Math.abs(tile.cz - cz) > radius + 1) {
+      if (Math.abs(tile.cx - cx) > radius || Math.abs(tile.cz - cz) > radius) {
         this._disposeTerrainTile(tile);
         this.terrainTiles.delete(key);
       }
     }
+    // Drop queued work that the player has already left behind.
+    this._terrainBuildQueue = this._terrainBuildQueue.filter((q) =>
+      Math.abs(q.tx - cx) <= radius + 1 && Math.abs(q.tz - cz) <= radius + 1);
+    const active = this._terrainBuildActive;
+    if (active && (Math.abs(active.cx - cx) > radius + 1 ||
+      Math.abs(active.cz - cz) > radius + 1)) {
+      this._terrainBuildActive = null;
+    }
+    const queued = new Set(this._terrainBuildQueue.map((q) => q.key));
     const missing = [];
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
         const tx = cx + dx, tz = cz + dz;
         const key = `${tx},${tz}`;
         if (this.terrainTiles.has(key)) continue;
+        if (this._terrainBuildActive && this._terrainBuildActive.key === key) continue;
+        if (queued.has(key)) continue;
         missing.push({ tx, tz, key, d: dx * dx + dz * dz });
       }
     }
-    if (!missing.length) return;
-    missing.sort((a, b) => a.d - b.d);
-    // Seed the inner 3x3 immediately; the rest fill in over the next frames.
-    const budget = (this.terrainTiles.size === 0 || initial)
-      ? Math.min(9, missing.length)
-      : (this._endlessQuality === 'low' ? 4 : 3);
-    for (let i = 0; i < Math.min(budget, missing.length); i++) {
-      this._buildTerrainTile(missing[i].tx, missing[i].tz);
+    if (missing.length) {
+      this._terrainBuildQueue.push(...missing);
+      // Prioritise the nearest missing ground every frame, not just on the
+      // frame the entry was enqueued.
+      for (const q of this._terrainBuildQueue) {
+        q.d = (q.tx - cx) * (q.tx - cx) + (q.tz - cz) * (q.tz - cz);
+      }
+      this._terrainBuildQueue.sort((a, b) => a.d - b.d);
     }
+    // Keep the frame budget tiny while driving. Initial stage load gets a
+    // larger slice so the car does not start over a hole in the world.
+    const deadline = performance.now() + (initial ? 320 : 3.4);
+    let built = 0;
+    const maxTiles = initial ? 12 : 3;
+    while (built < maxTiles && performance.now() < deadline) {
+      if (!this._terrainBuildActive) {
+        const next = this._terrainBuildQueue.shift();
+        if (!next) break;
+        this._terrainBuildActive = this._beginTerrainTile(next.tx, next.tz);
+        if (!this._terrainBuildActive) continue;
+      }
+      // 8 rows is roughly 3 ms of work and one-sixth of a high-quality tile.
+      if (this._stepTerrainTile(this._terrainBuildActive, initial ? 64 : 8)) {
+        this._terrainBuildActive = null;
+        built++;
+      }
+    }
+    this._ensureVisibleTileScenery(pos);
   }
 
-  _buildTerrainTile(cx, cz) {
+  _beginTerrainTile(cx, cz) {
     const key = `${cx},${cz}`;
-    if (this.terrainTiles.has(key)) return;
+    if (this.terrainTiles.has(key)) return null;
     const size = this.terrainTileSize;
     const cells = Math.max(8, Math.ceil(size / this.terrainTileStep));
     const step = size / cells;
@@ -5470,20 +5918,33 @@ export class Track {
     const z0 = cz * size;
     const cols = cells + 1;
     const count = cols * cols;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const uvs = new Float32Array(count * 2);
     const white = new THREE.Color(0xffffff);
-    const dirt = new THREE.Color(this.env.dirt || 0x8a7c5e).lerp(white, 0.62);
-    const dark = this.stage.biome === 'snow'
-      ? new THREE.Color(0xccd8e6)
-      : new THREE.Color(0xd2d6c4);
-    const rock = new THREE.Color(this.env.rock || 0x6e7064).lerp(white, 0.48);
-    const moss = new THREE.Color(this.env.moss || this.env.treeAlt || 0x6b7f3a).lerp(white, 0.5);
-    const snowShade = new THREE.Color(0xc7d8e8);
-    const nearRoadEdge = this.halfWidth + (this.env.terrain?.edge || 6);
-    const tmpC = new THREE.Color();
-    for (let r = 0; r < cols; r++) {
+    return {
+      cx, cz, key, size, cells, step, x0, z0, cols, count, row: 0,
+      positions: new Float32Array(count * 3),
+      colors: new Float32Array(count * 3),
+      uvs: new Float32Array(count * 2),
+      dirt: new THREE.Color(this.env.dirt || 0x8a7c5e).lerp(white, 0.62),
+      dark: this.stage.biome === 'snow'
+        ? new THREE.Color(0xccd8e6)
+        : new THREE.Color(0xd2d6c4),
+      rock: new THREE.Color(this.env.rock || 0x6e7064).lerp(white, 0.48),
+      moss: new THREE.Color(this.env.moss || this.env.treeAlt || 0x6b7f3a).lerp(white, 0.5),
+      snowShade: new THREE.Color(0xc7d8e8),
+      nearRoadEdge: this.halfWidth + (this.env.terrain?.edge || 6),
+      mountain: this.env.terrain?.style === 'mountain',
+      snow: this.stage.biome === 'snow',
+      tmpC: new THREE.Color(),
+    };
+  }
+
+  /** Process a slice of one terrain tile. Returns true when the mesh was
+   *  finished and added to the scene. */
+  _stepTerrainTile(state, maxRows) {
+    const { cols, x0, z0, step, positions, colors, uvs } = state;
+    let rows = 0;
+    while (state.row < cols && rows < maxRows) {
+      const r = state.row;
       for (let c = 0; c < cols; c++) {
         const idx = r * cols + c;
         const x = x0 + c * step;
@@ -5499,23 +5960,24 @@ export class Track {
         positions[idx * 3 + 2] = z;
         uvs[idx * 2] = x * 0.075;
         uvs[idx * 2 + 1] = z * 0.075;
-        const nearRoad = 1 - smoothstep(this.halfWidth + 0.7, nearRoadEdge, absLat);
+        const nearRoad = 1 - smoothstep(this.halfWidth + 0.7, state.nearRoadEdge, absLat);
         const n = fbm(x * 0.06, z * 0.06, this.seed) * 0.5 + 0.5;
         const nFine = fbm(x * 0.23, z * 0.23, this.seed + 9) * 0.5 + 0.5;
-        tmpC.setRGB(1, 1, 1).lerp(dark, n * 0.5);
+        const tmpC = state.tmpC;
+        tmpC.setRGB(1, 1, 1).lerp(state.dark, n * 0.5);
         const rel = y - s.pos.y;
         const rockMix = clamp(
           smoothstep(1.2, 7.5, Math.abs(rel)) * (0.35 + nFine * 0.45) +
-          (this.env.terrain?.style === 'mountain' ? smoothstep(0.5, 5, Math.abs(rel)) * 0.18 : 0),
+          (state.mountain ? smoothstep(0.5, 5, Math.abs(rel)) * 0.18 : 0),
           0, 0.72
         );
-        tmpC.lerp(rock, rockMix);
+        tmpC.lerp(state.rock, rockMix);
         const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82,
           fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * 0.34;
-        tmpC.lerp(moss, mossMix);
-        tmpC.lerp(dirt, nearRoad * 0.4);
-        if (this.stage.biome === 'snow') {
-          tmpC.lerp(snowShade, smoothstep(0.1, 3.0, Math.abs(rel)) * 0.2 + nearRoad * 0.1);
+        tmpC.lerp(state.moss, mossMix);
+        tmpC.lerp(state.dirt, nearRoad * 0.4);
+        if (state.snow) {
+          tmpC.lerp(state.snowShade, smoothstep(0.1, 3.0, Math.abs(rel)) * 0.2 + nearRoad * 0.1);
         }
         const shade = 0.9 + fbm(x * 0.13, z * 0.13, this.seed + 2) * 0.16;
         tmpC.multiplyScalar(shade);
@@ -5523,7 +5985,12 @@ export class Track {
         colors[idx * 3 + 1] = tmpC.g;
         colors[idx * 3 + 2] = tmpC.b;
       }
+      state.row++;
+      rows++;
     }
+    if (state.row < cols) return false;
+
+    const { cells, count, key } = state;
     const indices = new Uint32Array(cells * cells * 6);
     let k = 0;
     for (let r = 0; r < cells; r++) {
@@ -5537,9 +6004,9 @@ export class Track {
       }
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setAttribute('position', new THREE.BufferAttribute(state.positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(state.colors, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(state.uvs, 2));
     geo.setIndex(new THREE.BufferAttribute(indices, 1));
     geo.computeVertexNormals();
     const group = new THREE.Group();
@@ -5549,14 +6016,49 @@ export class Track {
     mesh.name = 'terrain-tile';
     group.add(mesh);
     this._scene.add(group);
-    const tile = { group, cx, cz, key, x0, z0 };
+    const tile = { group, cx: state.cx, cz: state.cz, key, x0: state.x0, z0: state.z0, sceneryBuilt: false };
     this.terrainTiles.set(key, tile);
-    this._buildTerrainTileScenery(tile);
+    state.positions = null;
+    state.colors = null;
+    state.uvs = null;
+    return true;
+  }
+
+  /** Build tile ground cover only where it can actually be seen. Terrain still
+   *  streams out to the fog line, but planting thousands of trees in tiles the
+   *  fog has already swallowed was pure vertex cost. */
+  _ensureVisibleTileScenery(pos) {
+    if (!this._sceneryBatches || !this._scene || !pos) return;
+    const size = this.terrainTileSize;
+    const range = this._sceneryRange || 220;
+    const candidates = [];
+    for (const tile of this.terrainTiles.values()) {
+      if (tile.sceneryBuilt || !tile.group) continue;
+      const cx = tile.cx * size + size * 0.5;
+      const cz = tile.cz * size + size * 0.5;
+      const d = Math.hypot(cx - pos.x, cz - pos.z);
+      if (d > range + size * 0.55) continue;
+      candidates.push({ tile, d });
+    }
+    if (!candidates.length) return;
+    candidates.sort((a, b) => a.d - b.d);
+    // A tile's vegetation is expensive to scatter; spread it over frames so
+    // crossing a tile boundary does not produce a hitch.
+    const budget = this._sceneryBuildBudget || 2;
+    for (let i = 0; i < Math.min(budget, candidates.length); i++) {
+      const tile = candidates[i].tile;
+      this._batchOwner = tile.group;
+      this._buildTerrainTileScenery(tile);
+      this._batchOwner = null;
+      tile.sceneryBuilt = true;
+    }
+    this._sceneryBatches.flush();
   }
 
   _disposeTerrainTile(tile) {
     if (!tile || !tile.group) return;
     this._removeCollidersForOwner(tile.group);
+    this._sceneryBatches?.removeOwner(tile.group);
     if (this._scene) this._scene.remove(tile.group);
     tile.group.traverse((obj) => {
       if (obj.isMesh && obj.geometry && !this._sharedGeos.has(obj.geometry)) {
@@ -5775,42 +6277,60 @@ export class Track {
     const rng = mulberry32(this.seed + i0 * 31 + 17);
     // shallow wet patches
     if (A.puddleMat) {
+      const puddles = [];
       for (let k = 0; k < 4; k++) {
         const idx = i0 + Math.floor(rng() * Math.max(1, n - 1));
         const s = this.samples[idx];
         const lat = (rng() - 0.5) * this.halfWidth * 1.5;
-        const mesh = new THREE.Mesh(A.puddleGeo, A.puddleMat);
-        mesh.position.set(
-          s.pos.x + s.right.x * lat,
-          s.pos.y + this.roadYOffset + 0.069,
-          s.pos.z + s.right.z * lat
-        );
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.rotation.z = rng() * Math.PI;
-        mesh.scale.set(0.8 + rng() * 2.6, 0.5 + rng() * 1.4, 1);
+        puddles.push({
+          x: s.pos.x + s.right.x * lat,
+          y: s.pos.y + this.roadYOffset + 0.069,
+          z: s.pos.z + s.right.z * lat,
+          tiltX: -Math.PI / 2,
+          tiltZ: rng() * Math.PI,
+          sx: 0.8 + rng() * 2.6,
+          sy: 0.5 + rng() * 1.4,
+          sz: 1,
+        });
+      }
+      const mesh = this._instanced(A.puddleGeo, A.puddleMat, puddles);
+      if (mesh) {
+        mesh.castShadow = false;
         group.add(mesh);
       }
     }
     // hazard surface patches
+    const hazards = new Map();
     for (const h of this.hazardPatches) {
       if (h.end < i0 || h.start > i1) continue;
       const mat = A.hazardMats[h.type];
       if (!mat) continue;
+      let items = hazards.get(h.type);
+      if (!items) { items = []; hazards.set(h.type, items); }
       const a = Math.max(h.start, i0);
       const b = Math.min(h.end, i1);
       for (let k = 0; k < 3; k++) {
         const idx = clamp(a + Math.floor(rng() * Math.max(1, b - a)), 0, this.n - 1);
         const s = this.samples[idx];
         const lat = (rng() - 0.5) * this.halfWidth * 1.25;
-        const mesh = new THREE.Mesh(A.hazardGeo, mat);
-        mesh.position.set(
-          s.pos.x + s.right.x * lat,
-          s.pos.y + this.roadYOffset + 0.068,
-          s.pos.z + s.right.z * lat
-        );
-        mesh.scale.set(1.2 + rng() * 2.4, 0.65 + rng() * 0.7, 1);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.rotation.z = rng() * Math.PI;
+        items.push({
+          x: s.pos.x + s.right.x * lat,
+          y: s.pos.y + this.roadYOffset + 0.068,
+          z: s.pos.z + s.right.z * lat,
+          tiltX: -Math.PI / 2,
+          tiltZ: rng() * Math.PI,
+          sx: 1.2 + rng() * 2.4,
+          sy: 0.65 + rng() * 0.7,
+          sz: 1,
+        });
+      }
+    }
+    for (const [type, items] of hazards) {
+      const mat = A.hazardMats[type];
+      if (!mat || !items.length) continue;
+      const mesh = this._instanced(A.hazardGeo, mat, items);
+      if (mesh) {
+        mesh.castShadow = false;
         group.add(mesh);
       }
     }
@@ -5891,28 +6411,17 @@ export class Track {
       }
     }
     if (postTransforms.length) {
-      const mesh = new THREE.InstancedMesh(P.postGeo, P.postMat, postTransforms.length);
-      postTransforms.forEach((t, i) => {
-        TMP.position.set(t.x, t.y, t.z);
-        TMP.rotation.set(0, t.ry, 0);
-        TMP.scale.set(1, t.sy, 1);
-        TMP.updateMatrix();
-        mesh.setMatrixAt(i, TMP.matrix);
-      });
-      mesh.castShadow = q === 'high';
-      group.add(mesh);
-      const caps = new THREE.InstancedMesh(P.capGeo, P.capMat, capTransforms.length);
-      capTransforms.forEach((t, i) => {
-        TMP.position.set(t.x, t.y, t.z);
-        TMP.rotation.set(0, t.ry, 0);
-        TMP.scale.set(t.sxz || 1, t.sy, t.sxz || 1);
-        TMP.updateMatrix();
-        caps.setMatrixAt(i, TMP.matrix);
-      });
-      group.add(caps);
+      const postMesh = this._instanced(P.postGeo, P.postMat, postTransforms);
+      if (postMesh) {
+        postMesh.castShadow = q === 'high';
+        group.add(postMesh);
+      }
+      const caps = this._instanced(P.capGeo, P.capMat, capTransforms);
+      if (caps) group.add(caps);
     }
     // warning boards at the start of each hazard section
     const rng = mulberry32(this.seed + i0 * 43 + 5);
+    const warnings = [];
     for (const h of this.hazardPatches) {
       if (h.start < i0 || h.start >= i1) continue;
       for (const side of [-1, 1]) {
@@ -5921,9 +6430,18 @@ export class Track {
         const s = this.samples[i];
         const lat = side * (this.halfWidth + 1.9);
         const y = this.surfaceHeight(i, lat);
-        const warn = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.72), P.warnMat);
-        warn.position.set(s.pos.x + s.right.x * lat, y + 0.9, s.pos.z + s.right.z * lat);
-        warn.rotation.y = s.heading + Math.PI / 2;
+        warnings.push({
+          x: s.pos.x + s.right.x * lat,
+          y: y + 0.9,
+          z: s.pos.z + s.right.z * lat,
+          rot: s.heading + Math.PI / 2,
+        });
+      }
+    }
+    if (warnings.length) {
+      const warn = this._instanced(P.warnGeo, P.warnMat, warnings);
+      if (warn) {
+        warn.castShadow = false;
         group.add(warn);
       }
     }

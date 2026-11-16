@@ -50,6 +50,7 @@ export class Cockpit {
     this.mapBase = this._buildMapBase();
     this.gaugeGlow = 0;
     this.nextUpPulse = 0;
+    this.auxScreen = 0;
     this.speedUnit = settings.units === 'mph' ? 'MPH' : 'KM/H';
     this.acc = 1;
   }
@@ -179,7 +180,11 @@ export class Cockpit {
     this.acc += dt;
     if (this.acc >= 0.1) {
       this.acc = 0;
-      this._drawAll(state);
+      // The trip-computer map stays at 10 Hz; the two smaller screens alternate
+      // at 5 Hz. That halves texture uploads without making the dash feel dead.
+      this._drawNav(state);
+      if (this.auxScreen++ % 2 === 0) this._drawGauge(state);
+      else this._drawPace(state);
     }
   }
 
@@ -387,7 +392,7 @@ export class Cockpit {
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, W - 2, H - 2);
 
-    s.tex.needsUpdate = true;
+    if (s.present) s.present(); else s.tex.needsUpdate = true;
   }
 
   _drawEndlessNav(ctx, state, x, y, w, h) {
@@ -679,7 +684,7 @@ export class Cockpit {
     ctx.strokeStyle = 'rgba(220,230,210,.09)';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, W - 2, H - 2);
-    s.tex.needsUpdate = true;
+    if (s.present) s.present(); else s.tex.needsUpdate = true;
   }
 
   _drawHazardChip(ctx, x, y, h) {
@@ -895,7 +900,7 @@ export class Cockpit {
     ctx.strokeStyle = 'rgba(220,230,210,.1)';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, W - 2, H - 2);
-    s.tex.needsUpdate = true;
+    if (s.present) s.present(); else s.tex.needsUpdate = true;
   }
 
   _dial(ctx, cx, cy, r, value, min, max, opts) {

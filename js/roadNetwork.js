@@ -214,9 +214,11 @@ export class RoadNetwork {
     const end = track.samples[endIdx];
     const halfWidth = 3.0 + rng() * 1.1;
     const surface = this._sideSurface();
-    // Centre the branch so its inner edge just touches the main carriageway.
-    // The small overlap is a junction flare, not a long overlap down the road.
-    const edgeOffset = track.halfWidth + halfWidth * 0.55;
+    // Centre the branch so its inner edge overlaps the main carriageway by a
+    // small amount. The junction apron below fills the flare between the two
+    // surfaces, so the entry can stay shallow instead of cutting in at a hard
+    // angle.
+    const edgeOffset = track.halfWidth + halfWidth * 0.35;
     const startPoint = new THREE.Vector3(
       start.pos.x + start.right.x * side * edgeOffset,
       start.pos.y,
@@ -225,9 +227,9 @@ export class RoadNetwork {
     const out = 24 + rng() * 54;
     const points = [startPoint];
     points.push(new THREE.Vector3(
-      startPoint.x + start.right.x * side * (7 + rng() * 8) + start.tangent.x * (14 + rng() * 8),
+      startPoint.x + start.right.x * side * (4 + rng() * 5) + start.tangent.x * (18 + rng() * 8),
       start.pos.y,
-      startPoint.z + start.right.z * side * (7 + rng() * 8) + start.tangent.z * (14 + rng() * 8)
+      startPoint.z + start.right.z * side * (4 + rng() * 5) + start.tangent.z * (18 + rng() * 8)
     ));
     const midX = (start.pos.x + end.pos.x) * 0.5 +
       start.right.x * side * out + start.tangent.x * (joined ? 0 : 20);
@@ -242,9 +244,9 @@ export class RoadNetwork {
         end.pos.z + end.right.z * side * edgeOffset
       );
       points.push(new THREE.Vector3(
-        endPoint.x + end.right.x * side * (7 + rng() * 8) - end.tangent.x * (14 + rng() * 8),
+        endPoint.x + end.right.x * side * (4 + rng() * 5) - end.tangent.x * (18 + rng() * 8),
         end.pos.y,
-        endPoint.z + end.right.z * side * (7 + rng() * 8) - end.tangent.z * (14 + rng() * 8)
+        endPoint.z + end.right.z * side * (4 + rng() * 5) - end.tangent.z * (18 + rng() * 8)
       ));
       points.push(endPoint);
     } else {
@@ -401,6 +403,121 @@ export class RoadNetwork {
     return mat;
   }
 
+  /** Work out which edge of a branch faces the main carriageway and which
+   *  main-road sample it joins. Used by both the apron and the post layout. */
+  _junctionEndInfo(road, atStart) {
+    const track = this.track;
+    const samples = road.samples;
+    const s = samples[atStart ? 0 : samples.length - 1];
+    const hint = s.mainIndex != null ? s.mainIndex : 0;
+    const from = Math.max(0, hint - 32);
+    const to = Math.min(track.n - 1, hint + 32);
+    const near = nearestMain(track, s.pos.x, s.pos.z, from, to);
+    const ms = track.samples[near.index];
+    const side = Math.sign(near.lateral) || 1;
+    // Direction from the branch centre back toward the main centreline.
+    const inwardX = -ms.right.x * side;
+    const inwardZ = -ms.right.z * side;
+    const branchRightX = -s.tangent.z;
+    const branchRightZ = s.tangent.x;
+    const innerSign = (branchRightX * inwardX + branchRightZ * inwardZ) >= 0 ? 1 : -1;
+    return { mainIndex: near.index, side, innerSign, sample: s };
+  }
+
+  /** A road-coloured apron that fills the flare between a branch and the main
+   *  carriageway. The apron overlaps the main road by a couple of centimetres
+   *  and tapers back to the branch width, so there is no open wedge or seam at
+   *  the junction. */
+  _buildJunction(road, group) {
+    const track = this.track;
+    const samples = road.samples;
+    if (samples.length < 4) return;
+    const rows = Math.min(samples.length, Math.ceil(24 / SIDE_STEP) + 2);
+    const cols = 9;
+    const ends = [{ atStart: true }];
+    if (road.joined) ends.push({ atStart: false });
+    for (const end of ends) {
+      const info = this._junctionEndInfo(road, end.atStart);
+      if (end.atStart) road.startInnerSign = info.innerSign;
+      else road.endInnerSign = info.innerSign;
+      const ms = info.sample;
+      const mainFrom = Math.max(0, info.mainIndex - 36);
+      const mainTo = Math.min(track.n - 1, info.mainIndex + 36);
+      const positions = new Float32Array(rows * cols * 3);
+      const colors = new Float32Array(rows * cols * 3);
+      const uvs = new Float32Array(rows * cols * 2);
+      const order = [];
+      for (let r = 0; r < rows; r++) {
+        const idx = end.atStart ? Math.min(samples.length - 1, r) : Math.max(0, samples.length - 1 - r);
+        order.push(idx);
+      }
+      for (let r = 0; r < rows; r++) {
+        const s = samples[order[r]];
+        const junctionT = r / Math.max(1, rows - 1);
+        const flare = 1 - smoothstep(0, 1, junctionT);
+        const innerEdge = info.innerSign *
+          (road.halfWidth + flare * (track.halfWidth + road.halfWidth + 3.5));
+        const outerEdge = -info.innerSign * road.halfWidth;
+        const right = new THREE.Vector3(-s.tangent.z, 0, s.tangent.x).normalize();
+        for (let c = 0; c < cols; c++) {
+          const u = c / (cols - 1);
+          const lat = lerp(innerEdge, outerEdge, u);
+          const x = s.pos.x + right.x * lat;
+          const z = s.pos.z + right.z * lat;
+          const baseY = s.pos.y + road.crown(lat);
+          const nearMain = nearestMain(track, x, z, mainFrom, mainTo);
+          const mainSample = track.samples[nearMain.index];
+          const mainAbs = Math.abs(nearMain.lateral);
+          let y = baseY;
+          if (mainAbs < track.halfWidth + 1.0) {
+            const mainY = mainSample.pos.y + track.roadYOffset +
+              track.roadCrown(nearMain.lateral) + 0.018;
+            // Keep the apron tied to the main crown where it overlaps the
+            // carriageway, then blend back to the branch deck at the lip.
+            const mainW = smoothstep(track.halfWidth + 0.8, track.halfWidth * 0.25, mainAbs);
+            y = lerp(baseY, mainY, mainW);
+          }
+          y += 0.004;
+          const vi = (r * cols + c) * 3;
+          positions[vi] = x;
+          positions[vi + 1] = y;
+          positions[vi + 2] = z;
+          colors[vi] = 1;
+          colors[vi + 1] = 1;
+          colors[vi + 2] = 1;
+          const ui = (r * cols + c) * 2;
+          uvs[ui] = u;
+          uvs[ui + 1] = (s.mainDist || 0) / 8.5;
+        }
+      }
+      const indices = [];
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          const a = r * cols + c;
+          const b = a + 1;
+          const d = a + cols;
+          const e = d + 1;
+          // End aprons are built from the junction backwards along the branch,
+          // so their row direction is reversed. Flip the winding to keep the
+          // surface facing up instead of disappearing as a backface.
+          if (end.atStart) indices.push(a, b, d, b, e, d);
+          else indices.push(a, d, b, b, d, e);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, this._material(road.surface));
+      mesh.name = 'junction-apron-' + road.id + (end.atStart ? '-start' : '-end');
+      mesh.receiveShadow = true;
+      mesh.renderOrder = 1;
+      group.add(mesh);
+    }
+  }
+
   _buildRoad(road) {
     const track = this.track;
     if (!this.scene) return;
@@ -501,14 +618,21 @@ export class RoadNetwork {
       shoulder.receiveShadow = true;
       group.add(shoulder);
     }
+    // Junction aprons close the wedge between the main carriageway and the
+    // branch before the marker posts are placed.
+    this._buildJunction(road, group);
     // Marker posts give side roads a legible edge at speed.
     const P = track._postAssets;
     if (P) {
       this.sharedGeos.add(P.postGeo);
       const items = [];
+      const junctionSkip = Math.ceil(18 / SIDE_STEP);
       for (let j = 4; j < n - 4; j += 6) {
         const s = samples[j];
         for (const side of [-1, 1]) {
+          // Do not plant the inner-side posts on the junction flare.
+          if (road.startInnerSign && side === road.startInnerSign && j < junctionSkip) continue;
+          if (road.endInnerSign && side === road.endInnerSign && n - 1 - j < junctionSkip) continue;
           if (this.visualRng() < 0.2) continue;
           const lat = side * (road.halfWidth + 0.9);
           items.push({

@@ -52,9 +52,9 @@ The regions no longer share one generic forest. Each biome owns its terrain prof
 Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road keeps generating ahead of you forever.
 
 - A procedural route generator builds corners, hairpins, straights, elevation changes and crests from the selected region's own character (tight touge, fast taiga, open safari, icy Lapland, etc.).
-- The main route grows a **branching side-road network**. Junctions fork left or right every few hundred metres; some branches wander away and dead-end, others curve back and rejoin the main road further ahead. Every branch is fully drivable with its own surface query, shoulders, marker posts and grip. Branch geometry is validated against the main road, existing side roads and itself, so roads no longer draw through each other.
+- The main route grows a **branching side-road network**. Junctions fork left or right every few hundred metres; some branches wander away and dead-end, others curve back and rejoin the main road further ahead. Every branch is fully drivable with its own surface query, shoulders, marker posts and grip. Branch geometry is validated against the main road, existing side roads and itself, so roads no longer draw through each other. Junction mouths are filled with a tapered road apron that blends the side-road crown into the main carriageway, so there is no open wedge, lip or disconnected edge at either end of a branch.
 - Road, shoulder, snow bank, scenery, posts and hazard surfaces are streamed in ~200 m chunks and the chunks behind you are disposed, so geometry and draw calls stay flat. Side-road topology and meshes are likewise built, disposed and pruned as you move.
-- Terrain is a separate **2D tile grid streamed around the car**, not a ribbon tied to the road. Ground therefore exists in every direction, including areas with no road at all. Dense tiles load around the player, distant tiles are disposed, and the grid follows you when you drive far off-road. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like.
+- Terrain is a separate **2D tile grid streamed around the car**, not a ribbon tied to the road. Ground therefore exists in every direction, including areas with no road at all. Dense tiles load around the player, distant tiles are disposed, and the grid follows you when you drive far off-road. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like. Endless terrain is smoothed across neighbouring route cross-sections, with lower-frequency micro-relief and a blended mountain-side profile, so streamed hills no longer arrive as sharp sawteeth or vertical seams.
 - Hazards, pacenotes and the co-driver keep being generated with the road. The trip-computer map switches to a live local section instead of trying to draw a shrinking whole route.
 - The timer keeps running, there is no finish gantry, and your furthest distance is stored per stage and car. Quit from the pause menu when you have had enough.
 - Streaming works on all ten environments.
@@ -96,9 +96,10 @@ Every stage can be run in any combination of conditions. Both are selectable fro
 - **Auto** keeps each stage's authored default look; pick dawn, dusk or night for a different mood.
 
 ### Driving model
-- Bicycle-model vehicle dynamics: front and rear slip angles produce the cornering forces, with a slip-angle curve that peaks and then falls away instead of gripping indefinitely.
-- Steering has a speed-sensitive lock, a real rack rate and self-centring return. The car asks for a slip angle rather than snapping to a yaw rate.
-- Longitudinal load transfer under acceleration and braking changes front/rear grip. Brake balance follows the dynamic front/rear load, so threshold braking is strong but the rear stays settled; locking the brakes costs steering and leaves lock-up marks.
+- Four-wheel vehicle dynamics: every tyre has its own ground contact, suspension travel, normal load, longitudinal demand, spin/lock state and lateral slip force. The old bicycle model is gone; the body is balanced by the four contact patches.
+- Steering has a speed-sensitive lock, a real rack rate, Ackermann front-wheel angles and self-centring return. The car asks for a slip angle rather than snapping to a yaw rate, and the tyre curve now builds force much earlier in the slip range, so small inputs actually bite.
+- Longitudinal load transfer under acceleration and braking changes each wheel's grip. Lateral load transfer is modelled per side with a stability floor. Brake balance follows the dynamic front/rear load, so threshold braking is strong but the rear stays settled; locking the brakes costs steering and leaves lock-up marks.
+- The terrain under all four wheels is sampled independently. Front/rear height differences and left/right height differences feed real gravity along the slope and across it, and the body pitch/roll is fitted to the contact plane instead of the road tangent. A car on a steep side-slope slides; a wall steeper than the climb limit blocks the car instead of letting it drive up a vertical face.
 - A torque-curve engine, six-speed automatic gearbox, clutch-cut shifts, engine braking, turbo spool and aero drag make acceleration and coasting speed-dependent. Wheels can spin or lock and the combined-slip tyre model reduces cornering grip when you use the tyres for braking or traction.
 - Weight, centre-of-mass position and drivetrain layout affect the balance: AWD launch and neutrality, RWD throttle-oversteer, FWD understeer.
 - Each car has its own grip figure, brake coefficient and tyre package.
@@ -128,8 +129,8 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Sky dome with colour-managed gradient, sun/moon discs, horizon glow, drifting procedural cloud cover and a star field at night.
 - Biome-specific distant ridges (jagged snow peaks, jungle ridges, flat taiga, rift escarpment), telegraph poles and sagging wires, tyre stacks and hay bales on the outside of corners, sponsor boards, hazard warning signs and parked spectator cars.
 - Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes, red safari dirt and the new coastal/alpine/eifel/Tuscan tarmac variants.
-- Branching side roads use the same road materials and get their own shoulders and marker posts. Junction geometry is kept clear of the main carriageway and of other branches.
-- Off-road terrain is generated as a square tile grid around the car, independent of road chunks; sparse trees and boulders are scattered into far tiles so the open world does not end at the verge.
+- Branching side roads use the same road materials and get their own shoulders and marker posts. Tapered junction aprons blend the branch deck into the main crown and close the wedge between the carriageways; junction-side posts are kept off the flare.
+- Off-road terrain is generated as a square tile grid around the car, independent of road chunks; sparse trees and boulders are scattered into far tiles so the open world does not end at the verge. Endless terrain cross-sections are smoothed along the route and the mountain-side bias is blended, eliminating the sharp stair-stepped seams of the old streamed tiles.
 - Skid marks are laid down under lock-up or handbrake slides; puddles and wet sheen appear when it rains.
 - Debris bursts throw bark, leaf and rock chunks with gravity, ground bounce and fade.
 - Windscreen rain droplets run and streak across the glass in the cockpit view.
@@ -143,7 +144,14 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Recovery (`R`) returns the car to the road with a +3 second penalty.
 
 ### Settings
-Graphics quality (high/medium/low), vivid shaders (off by default), weather, time of day, default camera, master volume, co-driver voice, weather effects, camera shake, look sensitivity, km/h or mph units, and clear-records. Quality affects draw distance/tree density, shadow quality and pixel ratio.
+Graphics quality (high/medium/low), vivid shaders (off by default), weather, time of day, default camera, master volume, co-driver voice, weather effects, camera shake, look sensitivity, km/h or mph units, and clear-records. Quality affects draw distance/tree density, shadow quality and pixel ratio. While driving, a conservative dynamic-resolution controller can lower the internal pixel ratio (never the object geometry or draw distance) if the frame rate stays below target, and restores it once there is headroom.
+
+### Performance
+- Endless scenery is pooled into global per-material instanced batches instead of one InstancedMesh per tree type per tile. The same trees, geometry and materials are drawn, but vegetation draw calls fall by an order of magnitude.
+- Tile and chunk vegetation is planted lazily inside the visible fog range and released with its streamed owner. Ground and road geometry still exist far ahead, but invisible canopy no longer costs vertices.
+- The car and cockpit static parts are baked into one mesh per material. Animated pieces (wheels, steering wheel, gear lever, handbrake, co-driver, wipers, screens) stay separate, so nothing loses detail or animation.
+- Terrain uses fewer, larger tiles (25 meshes instead of 49 at high quality) while keeping the same vertex density and ground coverage. Puddles, hazard patches, marker posts, caps and warning boards share instanced batches with their streamed chunks.
+- Vivid post-processing is off by default; the optional stack remains available in Settings.
 
 ### Mobile
 - Landscape touch layout: hold the left/right pads to steer, GAS/BRAKE pedals, handbrake, camera and pause buttons. Drag anywhere on the screen to look around.

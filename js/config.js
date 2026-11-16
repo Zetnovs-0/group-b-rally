@@ -20,7 +20,7 @@ export const DEFAULT_SETTINGS = {
   timeOfDay: 'auto',
   camera: 'cockpit',
   headlights: true,
-  shaders: 'vivid',
+  shaders: 'off',
 };
 
 /* ---------- Cars ---------- */
