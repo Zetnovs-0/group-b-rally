@@ -52,9 +52,9 @@ The regions no longer share one generic forest. Each biome owns its terrain prof
 Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road keeps generating ahead of you forever.
 
 - A procedural route generator builds corners, hairpins, straights, elevation changes and crests from the selected region's own character (tight touge, fast taiga, open safari, icy Lapland, etc.).
-- The main route grows a **branching side-road network**. Junctions fork left or right every few hundred metres; some branches wander away and dead-end, others curve back and rejoin the main road further ahead. Every branch is fully drivable with its own surface query, shoulders, marker posts and grip.
-- Road, terrain, shoulder, snow bank, scenery, posts and hazard surfaces are streamed in ~200 m chunks and the chunks behind you are disposed, so geometry and draw calls stay flat. Side-road topology and meshes are likewise built, disposed and pruned as you move.
-- Terrain is generated in dense rings beside the road and progressively coarser rings out to ~200 m either side. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like.
+- The main route grows a **branching side-road network**. Junctions fork left or right every few hundred metres; some branches wander away and dead-end, others curve back and rejoin the main road further ahead. Every branch is fully drivable with its own surface query, shoulders, marker posts and grip. Branch geometry is validated against the main road, existing side roads and itself, so roads no longer draw through each other.
+- Road, shoulder, snow bank, scenery, posts and hazard surfaces are streamed in ~200 m chunks and the chunks behind you are disposed, so geometry and draw calls stay flat. Side-road topology and meshes are likewise built, disposed and pruned as you move.
+- Terrain is a separate **2D tile grid streamed around the car**, not a ribbon tied to the road. Ground therefore exists in every direction, including areas with no road at all. Dense tiles load around the player, distant tiles are disposed, and the grid follows you when you drive far off-road. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like.
 - Hazards, pacenotes and the co-driver keep being generated with the road. The trip-computer map switches to a live local section instead of trying to draw a shrinking whole route.
 - The timer keeps running, there is no finish gantry, and your furthest distance is stored per stage and car. Quit from the pause menu when you have had enough.
 - Streaming works on all ten environments.
@@ -128,7 +128,8 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Sky dome with colour-managed gradient, sun/moon discs, horizon glow, drifting procedural cloud cover and a star field at night.
 - Biome-specific distant ridges (jagged snow peaks, jungle ridges, flat taiga, rift escarpment), telegraph poles and sagging wires, tyre stacks and hay bales on the outside of corners, sponsor boards, hazard warning signs and parked spectator cars.
 - Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes, red safari dirt and the new coastal/alpine/eifel/Tuscan tarmac variants.
-- Branching side roads use the same road materials and get their own shoulders and marker posts.
+- Branching side roads use the same road materials and get their own shoulders and marker posts. Junction geometry is kept clear of the main carriageway and of other branches.
+- Off-road terrain is generated as a square tile grid around the car, independent of road chunks; sparse trees and boulders are scattered into far tiles so the open world does not end at the verge.
 - Skid marks are laid down under lock-up or handbrake slides; puddles and wet sheen appear when it rains.
 - Debris bursts throw bark, leaf and rock chunks with gravity, ground bounce and fade.
 - Windscreen rain droplets run and streak across the glass in the cockpit view.

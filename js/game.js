@@ -1209,6 +1209,7 @@ export class Game {
       gears: this.physics?.gear,
       rpm: this.physics?.rpm,
       colliders: this.track?.colliders?.length,
+      terrainTiles: this.track?.terrainTiles?.size,
       sideRoads: this.track?.roadNetwork?.debug?.(),
     };
   }

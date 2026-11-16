@@ -185,122 +185,177 @@ export class RoadNetwork {
   _growJunction(mainIdx) {
     const track = this.track;
     const rng = this.rng;
-    const start = track.samples[mainIdx];
     const twoWay = rng() < 0.34;
     const sides = twoWay ? [-1, 1] : [rng() < 0.5 ? -1 : 1];
     for (const side of sides) {
-      const joined = rng() < 0.62;
-      const spanM = joined ? 130 + rng() * 260 : 80 + rng() * 190;
-      const endIdx = clamp(
-        mainIdx + Math.round(spanM / track.step),
-        mainIdx + 18,
-        Math.min(track.n - 16, mainIdx + Math.round(430 / track.step))
-      );
-      const end = track.samples[endIdx];
-      const halfWidth = 3.0 + rng() * 1.1;
-      const surface = this._sideSurface();
-      const points = [];
-      points.push(new THREE.Vector3(start.pos.x, start.pos.y, start.pos.z));
-      points.push(new THREE.Vector3(
-        start.pos.x + start.right.x * side * (track.halfWidth + 4) + start.tangent.x * 20,
-        start.pos.y,
-        start.pos.z + start.right.z * side * (track.halfWidth + 4) + start.tangent.z * 20
-      ));
-      const out = 22 + rng() * 54;
-      const midX = (start.pos.x + end.pos.x) * 0.5 +
-        start.right.x * side * out + start.tangent.x * (joined ? 0 : 20);
-      const midZ = (start.pos.z + end.pos.z) * 0.5 +
-        start.right.z * side * out + start.tangent.z * (joined ? 0 : 20);
-      points.push(new THREE.Vector3(midX, (start.pos.y + end.pos.y) * 0.5, midZ));
-      if (joined) {
-        points.push(new THREE.Vector3(
-          end.pos.x + end.right.x * side * (track.halfWidth + 4) - end.tangent.x * 22,
-          end.pos.y,
-          end.pos.z + end.right.z * side * (track.halfWidth + 4) - end.tangent.z * 22
-        ));
-        points.push(new THREE.Vector3(end.pos.x, end.pos.y, end.pos.z));
-      } else {
-        const twist = (rng() - 0.5) * 0.9;
-        points.push(new THREE.Vector3(
-          midX + start.right.x * side * (12 + rng() * 28) + start.tangent.x * (26 + rng() * 40) - start.right.x * twist * 18,
-          (start.pos.y + end.pos.y) * 0.5,
-          midZ + start.right.z * side * (12 + rng() * 28) + start.tangent.z * (26 + rng() * 40) - start.right.z * twist * 18
-        ));
-        points.push(new THREE.Vector3(
-          midX + start.right.x * side * (8 + rng() * 22) + start.tangent.x * (52 + rng() * 64),
-          start.pos.y,
-          midZ + start.right.z * side * (8 + rng() * 22) + start.tangent.z * (52 + rng() * 64)
-        ));
-      }
-      const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.36);
-      const length = curve.getLength();
-      if (length < 55) continue;
-      const count = Math.max(12, Math.ceil(length / SIDE_STEP));
-      const raw = curve.getSpacedPoints(count - 1);
-      const samples = [];
-      let prevHeading = null;
-      for (let k = 0; k < raw.length; k++) {
-        const p = raw[k];
-        const a = raw[Math.max(0, k - 1)];
-        const b = raw[Math.min(raw.length - 1, k + 1)];
-        const tx = b.x - a.x;
-        const tz = b.z - a.z;
-        const heading = Math.atan2(tx, tz);
-        const near = nearestMain(track, p.x, p.z,
-          Math.max(0, mainIdx - 10), Math.min(track.n - 1, endIdx + 10));
-        const y = mainTerrainY(track, p.x, p.z,
-          Math.max(0, mainIdx - 10), Math.min(track.n - 1, endIdx + 10));
-        samples.push({
-          pos: new THREE.Vector3(p.x, y, p.z),
-          heading,
-          prevHeading,
-          tangent: new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)),
-          mainIndex: near.index,
-          mainDist: track.samples[near.index].dist,
-        });
-        prevHeading = heading;
-      }
-      // Smooth the deck and keep it within a drivable grade. The road sits a
-      // few centimetres above the terrain so it reads as a proper surface.
-      for (let pass = 0; pass < 4; pass++) {
-        for (let k = 1; k < samples.length - 1; k++) {
-          samples[k].pos.y = samples[k].pos.y * 0.5 +
-            (samples[k - 1].pos.y + samples[k + 1].pos.y) * 0.25;
+      // A couple of shapes are tried per side. Branches that would cut through
+      // the main road, clip another side road, or fold back over themselves
+      // are discarded instead of being drawn as overlapping ribbons.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const joined = rng() < 0.6;
+        const spanM = joined ? 130 + rng() * 260 : 80 + rng() * 190;
+        const endIdx = clamp(
+          mainIdx + Math.round(spanM / track.step),
+          mainIdx + 18,
+          Math.min(track.n - 16, mainIdx + Math.round(430 / track.step))
+        );
+        const road = this._makeBranch(mainIdx, endIdx, side, joined, rng);
+        if (road) {
+          this.roads.push(road);
+          break;
         }
       }
-      const maxGrade = 0.19;
-      let minY = samples[0].pos.y;
-      for (let k = 1; k < samples.length; k++) {
-        const step = samples[k].pos.distanceTo(samples[k - 1].pos) || SIDE_STEP;
-        samples[k].pos.y = clamp(samples[k].pos.y, minY - step * maxGrade, minY + step * maxGrade);
-        minY = samples[k].pos.y;
-      }
-      // Keep the deck above the ground across its full width. Without this the
-      // uphill verge can poke through an otherwise clean ribbon.
-      const w = halfWidth * 0.92;
-      const from = Math.max(0, mainIdx - 10);
-      const to = Math.min(track.n - 1, endIdx + 10);
-      for (const s of samples) {
-        const rx = Math.cos(s.heading);
-        const rz = -Math.sin(s.heading);
-        const yc = mainTerrainY(track, s.pos.x, s.pos.z, from, to);
-        const yl = mainTerrainY(track, s.pos.x + rx * w, s.pos.z + rz * w, from, to);
-        const yr = mainTerrainY(track, s.pos.x - rx * w, s.pos.z - rz * w, from, to);
-        s.pos.y = Math.max(s.pos.y, yc, yl, yr) + 0.025;
-      }
-      // Blend the two endpoints into the main road so there is no lip.
-      if (joined) {
-        const endY = track.samples[endIdx].pos.y;
-        for (let k = 0; k < samples.length; k++) {
-          const t = k / (samples.length - 1);
-          const lip = smoothstep(0.86, 1.0, t);
-          samples[k].pos.y = samples[k].pos.y * (1 - lip) + (endY + 0.03) * lip;
-        }
-      }
-      for (const s of samples) s.pos.y += 0.045;
-      const road = new SideRoad(this._nextId++, samples, halfWidth, surface, track, { joined });
-      this.roads.push(road);
     }
+  }
+
+  _makeBranch(mainIdx, endIdx, side, joined, rng) {
+    const track = this.track;
+    const start = track.samples[mainIdx];
+    const end = track.samples[endIdx];
+    const halfWidth = 3.0 + rng() * 1.1;
+    const surface = this._sideSurface();
+    // Centre the branch so its inner edge just touches the main carriageway.
+    // The small overlap is a junction flare, not a long overlap down the road.
+    const edgeOffset = track.halfWidth + halfWidth * 0.55;
+    const startPoint = new THREE.Vector3(
+      start.pos.x + start.right.x * side * edgeOffset,
+      start.pos.y,
+      start.pos.z + start.right.z * side * edgeOffset
+    );
+    const out = 24 + rng() * 54;
+    const points = [startPoint];
+    points.push(new THREE.Vector3(
+      startPoint.x + start.right.x * side * (7 + rng() * 8) + start.tangent.x * (14 + rng() * 8),
+      start.pos.y,
+      startPoint.z + start.right.z * side * (7 + rng() * 8) + start.tangent.z * (14 + rng() * 8)
+    ));
+    const midX = (start.pos.x + end.pos.x) * 0.5 +
+      start.right.x * side * out + start.tangent.x * (joined ? 0 : 20);
+    const midZ = (start.pos.z + end.pos.z) * 0.5 +
+      start.right.z * side * out + start.tangent.z * (joined ? 0 : 20);
+    points.push(new THREE.Vector3(midX, (start.pos.y + end.pos.y) * 0.5, midZ));
+    let endPoint = null;
+    if (joined) {
+      endPoint = new THREE.Vector3(
+        end.pos.x + end.right.x * side * edgeOffset,
+        end.pos.y,
+        end.pos.z + end.right.z * side * edgeOffset
+      );
+      points.push(new THREE.Vector3(
+        endPoint.x + end.right.x * side * (7 + rng() * 8) - end.tangent.x * (14 + rng() * 8),
+        end.pos.y,
+        endPoint.z + end.right.z * side * (7 + rng() * 8) - end.tangent.z * (14 + rng() * 8)
+      ));
+      points.push(endPoint);
+    } else {
+      const twist = (rng() - 0.5) * 0.9;
+      points.push(new THREE.Vector3(
+        midX + start.right.x * side * (12 + rng() * 28) + start.tangent.x * (26 + rng() * 40) - start.right.x * twist * 18,
+        (start.pos.y + end.pos.y) * 0.5,
+        midZ + start.right.z * side * (12 + rng() * 28) + start.tangent.z * (26 + rng() * 40) - start.right.z * twist * 18
+      ));
+      points.push(new THREE.Vector3(
+        midX + start.right.x * side * (8 + rng() * 22) + start.tangent.x * (52 + rng() * 64),
+        start.pos.y,
+        midZ + start.right.z * side * (8 + rng() * 22) + start.tangent.z * (52 + rng() * 64)
+      ));
+    }
+    const curve = new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.36);
+    const length = curve.getLength();
+    if (length < 55) return null;
+    const count = Math.max(12, Math.ceil(length / SIDE_STEP));
+    const raw = curve.getSpacedPoints(count - 1);
+    const from = Math.max(0, mainIdx - 10);
+    const to = Math.min(track.n - 1, endIdx + 10);
+    const samples = [];
+    let prevHeading = null;
+    for (let k = 0; k < raw.length; k++) {
+      const p = raw[k];
+      const a = raw[Math.max(0, k - 1)];
+      const b = raw[Math.min(raw.length - 1, k + 1)];
+      const tx = b.x - a.x;
+      const tz = b.z - a.z;
+      const heading = Math.atan2(tx, tz);
+      const near = nearestMain(track, p.x, p.z, from, to);
+      const y = mainTerrainY(track, p.x, p.z, from, to);
+      samples.push({
+        pos: new THREE.Vector3(p.x, y, p.z),
+        heading,
+        prevHeading,
+        tangent: new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)),
+        mainIndex: near.index,
+        mainDist: track.samples[near.index].dist,
+      });
+      prevHeading = heading;
+    }
+    // Smooth the deck and keep it within a drivable grade.
+    for (let pass = 0; pass < 4; pass++) {
+      for (let k = 1; k < samples.length - 1; k++) {
+        samples[k].pos.y = samples[k].pos.y * 0.5 +
+          (samples[k - 1].pos.y + samples[k + 1].pos.y) * 0.25;
+      }
+    }
+    const maxGrade = 0.19;
+    let minY = samples[0].pos.y;
+    for (let k = 1; k < samples.length; k++) {
+      const step = samples[k].pos.distanceTo(samples[k - 1].pos) || SIDE_STEP;
+      samples[k].pos.y = clamp(samples[k].pos.y, minY - step * maxGrade, minY + step * maxGrade);
+      minY = samples[k].pos.y;
+    }
+    // Raise the deck above the terrain across its width.
+    const w = halfWidth * 0.92;
+    for (const s of samples) {
+      const rx = Math.cos(s.heading);
+      const rz = -Math.sin(s.heading);
+      const yc = mainTerrainY(track, s.pos.x, s.pos.z, from, to);
+      const yl = mainTerrainY(track, s.pos.x + rx * w, s.pos.z + rz * w, from, to);
+      const yr = mainTerrainY(track, s.pos.x - rx * w, s.pos.z - rz * w, from, to);
+      s.pos.y = Math.max(s.pos.y, yc, yl, yr) + 0.025;
+    }
+    // Blend both junctions into the main road surface.
+    const startY = start.pos.y + track.roadYOffset + track.roadCrown(track.halfWidth);
+    for (let k = 0; k < samples.length; k++) {
+      const t = k / (samples.length - 1);
+      const lipStart = 1 - smoothstep(0.0, 0.13, t);
+      if (lipStart > 0.001) samples[k].pos.y = samples[k].pos.y * (1 - lipStart) + (startY + 0.01) * lipStart;
+      if (endPoint) {
+        const endY = end.pos.y + track.roadYOffset + track.roadCrown(track.halfWidth);
+        const lipEnd = smoothstep(0.87, 1.0, t);
+        if (lipEnd > 0.001) samples[k].pos.y = samples[k].pos.y * (1 - lipEnd) + (endY + 0.01) * lipEnd;
+      }
+    }
+    if (!this._branchIsClear(samples, halfWidth, mainIdx, endIdx)) return null;
+    return new SideRoad(this._nextId++, samples, halfWidth, surface, track, { joined });
+  }
+
+  /** Reject branches that run through the main road, through another side
+   *  road, or fold back over themselves. Junction ends are exempt only for the
+   *  short flare where the branch meets the main carriageway. */
+  _branchIsClear(samples, halfWidth, mainIdx, endIdx) {
+    const track = this.track;
+    const n = samples.length;
+    if (n < 14) return false;
+    const entrySkip = Math.max(3, Math.ceil((track.halfWidth + halfWidth + 4) / SIDE_STEP));
+    const from = Math.max(0, mainIdx - 10);
+    const to = Math.min(track.n - 1, endIdx + Math.round(220 / track.step));
+    for (let k = entrySkip; k < n - entrySkip; k++) {
+      const p = samples[k].pos;
+      const near = nearestMain(track, p.x, p.z, from, to);
+      if (Math.abs(near.lateral) < track.halfWidth + halfWidth + 1.0) return false;
+      for (const road of this.roads) {
+        const b = road.bounds;
+        if (p.x < b.minX - 8 || p.x > b.maxX + 8 ||
+            p.z < b.minZ - 8 || p.z > b.maxZ + 8) continue;
+        const hit = road.nearest(p);
+        if (hit && hit.distance < road.halfWidth + halfWidth + 1.1) return false;
+      }
+      for (let j = k + 12; j < n; j++) {
+        const dx = p.x - samples[j].pos.x;
+        const dz = p.z - samples[j].pos.z;
+        if (dx * dx + dz * dz < (halfWidth * 2 + 1.2) ** 2) return false;
+      }
+    }
+    return true;
   }
 
   _sideSurface() {

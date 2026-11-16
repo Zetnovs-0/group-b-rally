@@ -110,6 +110,11 @@ export class Track {
     this.moteCount = 0;
     this.featureMeshes = [];
     this.landmarks = {};
+    this.terrainTiles = new Map();
+    this.terrainTileSize = 96;
+    this.terrainTileStep = 3.2;
+    this.terrainTileRadius = 3;
+    this._terrainTilesReady = false;
 
     // Static prop collisions. Colliders live in a spatial hash so the car can
     // hit trees/rocks anywhere in the world without an O(n) scan every step.
@@ -454,6 +459,9 @@ export class Track {
     while (this.chunks.length && this.chunks[0].dist1 < cutoff) {
       this._disposeChunk(this.chunks.shift());
     }
+    // Terrain is streamed in a square grid around the car, not along the road.
+    // This guarantees ground exists off-road everywhere the player can see.
+    this.updateTerrainTiles(pos);
   }
 
   _hazardTableForBiome(biome) {
@@ -1622,6 +1630,38 @@ export class Track {
       if (d < bestD) { bestD = d; fine = i; }
     }
     return { index: fine, distance: Math.sqrt(bestD) };
+  }
+
+  /** Coarser nearest-sample search for world-space terrain tiles. Terrain
+   *  vertices are far more numerous than road queries, so a wider stride keeps
+   *  tile construction cheap even after the endless route has grown long. */
+  _nearestWorldIndex(x, z) {
+    if (!this._worldCoarse || this._worldCoarseN !== this.n) {
+      this._worldCoarse = [];
+      this._worldCoarseN = this.n;
+      const stride = 12;
+      for (let i = 0; i < this.n; i += stride) this._worldCoarse.push(i);
+      if (this._worldCoarse[this._worldCoarse.length - 1] !== this.n - 1) {
+        this._worldCoarse.push(this.n - 1);
+      }
+    }
+    let best = 0;
+    let bestD = Infinity;
+    const coarse = this._worldCoarse;
+    for (let k = 0; k < coarse.length; k++) {
+      const i = coarse[k];
+      const p = this.samples[i].pos;
+      const dx = x - p.x, dz = z - p.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    for (let i = Math.max(0, best - 16); i < Math.min(this.n, best + 17); i++) {
+      const p = this.samples[i].pos;
+      const dx = x - p.x, dz = z - p.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return { index: best, distance: Math.sqrt(bestD) };
   }
 
   async buildTerrain(scene, quality) {
@@ -5316,9 +5356,19 @@ export class Track {
     });
     for (const g of [postGeo, capGeo]) this._sharedGeos.add(g);
     this._postAssets = { postGeo, postMat, capGeo, capMat, warnMat };
+
+    // The old endless terrain was a ribbon tied to the road. Terrain is now a
+    // free 2D grid streamed around the car so the world exists off-road too.
+    this.terrainTileSize = quality === 'high' ? 96 : quality === 'medium' ? 112 : 128;
+    this.terrainTileStep = quality === 'high' ? 3.2 : quality === 'medium' ? 4.8 : 6.4;
+    this.terrainTileRadius = quality === 'high' ? 3 : quality === 'medium' ? 3 : 2;
+    this.worldBound = 900;
+    this._terrainTilesReady = true;
+
     this.roadNetwork?.attach(scene);
     this.roadNetwork?.update(this.samples[Math.min(3, this.n - 1)]?.dist || 0);
     this._buildEndlessChunks(true);
+    this.updateTerrainTiles(this.samples[Math.min(3, this.n - 1)].pos);
   }
 
   _buildEndlessChunks(initial = false) {
@@ -5340,7 +5390,8 @@ export class Track {
   _createEndlessChunk(i0, i1) {
     const group = new THREE.Group();
     group.name = 'endless-chunk';
-    this._addChunkTerrain(group, i0, i1);
+    // Terrain is handled by updateTerrainTiles; chunks only carry the road,
+    // roadside scenery and furniture.
     this._addChunkRoad(group, i0, i1);
     this._addChunkScenery(group, i0, i1);
     this._addChunkProps(group, i0, i1);
@@ -5363,30 +5414,62 @@ export class Track {
     });
   }
 
-  _addChunkTerrain(group, i0, i1) {
-    const q = this._endlessQuality;
-    const stride = q === 'high' ? 2 : q === 'medium' ? 3 : 4;
-    const latStep = q === 'high' ? 3.4 : q === 'medium' ? 4.6 : 6.4;
-    const span = q === 'high' ? 56 : q === 'medium' ? 50 : 42;
-    const halfCols = Math.ceil(span / latStep);
-    // A dense strip beside the road, then progressively coarser rings out to
-    // the world edge. This gives the player real terrain to explore off-road
-    // without paying for high-density geometry a quarter of a kilometre away.
-    const lats = [];
-    for (let i = -halfCols; i <= halfCols; i++) lats.push(i * latStep);
-    const outerSpan = q === 'high' ? 215 : q === 'medium' ? 170 : 125;
-    let outward = halfCols * latStep;
-    let grow = latStep * 1.9;
-    while (outward < outerSpan) {
-      outward = Math.min(outerSpan, outward + grow);
-      grow *= 1.45;
-      lats.unshift(-outward);
-      lats.push(outward);
+  /* ============================================================
+     OPEN-WORLD TERRAIN TILES
+     Terrain is streamed in a 2D grid around the car, independent
+     of the road. Road chunks only carry road/scenery furniture.
+     ============================================================ */
+  /** Continuous world-space ground height. Uses the nearest main-route
+   *  cross-section, so terrain exists independently of streamed road chunks. */
+  worldHeightAt(x, z) {
+    const near = this._nearestWorldIndex(x, z);
+    const s = this.samples[near.index];
+    const lateral = (x - s.pos.x) * s.right.x + (z - s.pos.z) * s.right.z;
+    return this.heightAtSample(near.index, lateral);
+  }
+
+  updateTerrainTiles(pos, initial = false) {
+    if (!this.endless || !this._scene || !this._assets || !this._terrainTilesReady || !pos) return;
+    const size = this.terrainTileSize;
+    const cx = Math.floor(pos.x / size);
+    const cz = Math.floor(pos.z / size);
+    const radius = this.terrainTileRadius;
+    for (const [key, tile] of this.terrainTiles) {
+      if (Math.abs(tile.cx - cx) > radius + 1 || Math.abs(tile.cz - cz) > radius + 1) {
+        this._disposeTerrainTile(tile);
+        this.terrainTiles.delete(key);
+      }
     }
-    const cols = lats.length;
-    this.worldBound = outerSpan - 18;
-    const rows = Math.floor((i1 - i0) / stride) + 1;
-    const count = rows * cols;
+    const missing = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        const tx = cx + dx, tz = cz + dz;
+        const key = `${tx},${tz}`;
+        if (this.terrainTiles.has(key)) continue;
+        missing.push({ tx, tz, key, d: dx * dx + dz * dz });
+      }
+    }
+    if (!missing.length) return;
+    missing.sort((a, b) => a.d - b.d);
+    // Seed the inner 3x3 immediately; the rest fill in over the next frames.
+    const budget = (this.terrainTiles.size === 0 || initial)
+      ? Math.min(9, missing.length)
+      : (this._endlessQuality === 'low' ? 4 : 3);
+    for (let i = 0; i < Math.min(budget, missing.length); i++) {
+      this._buildTerrainTile(missing[i].tx, missing[i].tz);
+    }
+  }
+
+  _buildTerrainTile(cx, cz) {
+    const key = `${cx},${cz}`;
+    if (this.terrainTiles.has(key)) return;
+    const size = this.terrainTileSize;
+    const cells = Math.max(8, Math.ceil(size / this.terrainTileStep));
+    const step = size / cells;
+    const x0 = cx * size;
+    const z0 = cz * size;
+    const cols = cells + 1;
+    const count = cols * cols;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const uvs = new Float32Array(count * 2);
@@ -5398,24 +5481,25 @@ export class Track {
     const rock = new THREE.Color(this.env.rock || 0x6e7064).lerp(white, 0.48);
     const moss = new THREE.Color(this.env.moss || this.env.treeAlt || 0x6b7f3a).lerp(white, 0.5);
     const snowShade = new THREE.Color(0xc7d8e8);
+    const nearRoadEdge = this.halfWidth + (this.env.terrain?.edge || 6);
     const tmpC = new THREE.Color();
-    for (let r = 0; r < rows; r++) {
-      const idx = i0 + Math.min(r * stride, i1 - i0);
-      const s = this.samples[idx];
+    for (let r = 0; r < cols; r++) {
       for (let c = 0; c < cols; c++) {
-        const ci = r * cols + c;
-        const lat = lats[c];
-        const x = s.pos.x + s.right.x * lat;
-        const z = s.pos.z + s.right.z * lat;
-        let y = this.heightAtSample(idx, lat);
-        const d = Math.abs(lat);
-        if (d < this.halfWidth + 1.2) y = Math.min(y, s.pos.y - 0.09);
-        positions[ci * 3] = x;
-        positions[ci * 3 + 1] = y;
-        positions[ci * 3 + 2] = z;
-        uvs[ci * 2] = x * 0.075;
-        uvs[ci * 2 + 1] = z * 0.075;
-        const nearRoad = 1 - smoothstep(this.halfWidth + 0.7, this.halfWidth + (this.env.terrain?.edge || 6), d);
+        const idx = r * cols + c;
+        const x = x0 + c * step;
+        const z = z0 + r * step;
+        const near = this._nearestWorldIndex(x, z);
+        const s = this.samples[near.index];
+        const lateral = (x - s.pos.x) * s.right.x + (z - s.pos.z) * s.right.z;
+        const absLat = Math.abs(lateral);
+        let y = this.heightAtSample(near.index, lateral);
+        if (absLat < this.halfWidth + 1.2) y = Math.min(y, s.pos.y - 0.09);
+        positions[idx * 3] = x;
+        positions[idx * 3 + 1] = y;
+        positions[idx * 3 + 2] = z;
+        uvs[idx * 2] = x * 0.075;
+        uvs[idx * 2 + 1] = z * 0.075;
+        const nearRoad = 1 - smoothstep(this.halfWidth + 0.7, nearRoadEdge, absLat);
         const n = fbm(x * 0.06, z * 0.06, this.seed) * 0.5 + 0.5;
         const nFine = fbm(x * 0.23, z * 0.23, this.seed + 9) * 0.5 + 0.5;
         tmpC.setRGB(1, 1, 1).lerp(dark, n * 0.5);
@@ -5426,7 +5510,8 @@ export class Track {
           0, 0.72
         );
         tmpC.lerp(rock, rockMix);
-        const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82, fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * 0.34;
+        const mossMix = (1 - rockMix) * smoothstep(0.42, 0.82,
+          fbm(x * 0.17, z * 0.17, this.seed + 21) * 0.5 + 0.5) * 0.34;
         tmpC.lerp(moss, mossMix);
         tmpC.lerp(dirt, nearRoad * 0.4);
         if (this.stage.biome === 'snow') {
@@ -5434,21 +5519,21 @@ export class Track {
         }
         const shade = 0.9 + fbm(x * 0.13, z * 0.13, this.seed + 2) * 0.16;
         tmpC.multiplyScalar(shade);
-        colors[ci * 3] = tmpC.r;
-        colors[ci * 3 + 1] = tmpC.g;
-        colors[ci * 3 + 2] = tmpC.b;
+        colors[idx * 3] = tmpC.r;
+        colors[idx * 3 + 1] = tmpC.g;
+        colors[idx * 3 + 2] = tmpC.b;
       }
     }
-    const indices = new Uint32Array((cols - 1) * (rows - 1) * 6);
+    const indices = new Uint32Array(cells * cells * 6);
     let k = 0;
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
+    for (let r = 0; r < cells; r++) {
+      for (let c = 0; c < cells; c++) {
         const a = r * cols + c;
         const b = a + 1;
-        const cc = a + cols;
-        const dd = cc + 1;
-        indices[k++] = a; indices[k++] = b; indices[k++] = cc;
-        indices[k++] = b; indices[k++] = dd; indices[k++] = cc;
+        const d = a + cols;
+        const e = d + 1;
+        indices[k++] = a; indices[k++] = d; indices[k++] = b;
+        indices[k++] = b; indices[k++] = d; indices[k++] = e;
       }
     }
     const geo = new THREE.BufferGeometry();
@@ -5457,9 +5542,111 @@ export class Track {
     geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geo.setIndex(new THREE.BufferAttribute(indices, 1));
     geo.computeVertexNormals();
+    const group = new THREE.Group();
+    group.name = `terrain-tile:${key}`;
     const mesh = new THREE.Mesh(geo, this._assets.terrainMat);
     mesh.receiveShadow = true;
+    mesh.name = 'terrain-tile';
     group.add(mesh);
+    this._scene.add(group);
+    const tile = { group, cx, cz, key, x0, z0 };
+    this.terrainTiles.set(key, tile);
+    this._buildTerrainTileScenery(tile);
+  }
+
+  _disposeTerrainTile(tile) {
+    if (!tile || !tile.group) return;
+    this._removeCollidersForOwner(tile.group);
+    if (this._scene) this._scene.remove(tile.group);
+    tile.group.traverse((obj) => {
+      if (obj.isMesh && obj.geometry && !this._sharedGeos.has(obj.geometry)) {
+        obj.geometry.dispose();
+      }
+    });
+    tile.group = null;
+  }
+
+  _buildTerrainTileScenery(tile) {
+    if (!this._treeAssets || !tile.group) return;
+    const q = this._endlessQuality;
+    const size = this.terrainTileSize;
+    const prof = this._scatterProfile();
+    const mix = prof.mix || { pine: 0.6, birch: 0.4 };
+    const keys = Object.keys(mix);
+    const rng = mulberry32((this.seed ^ Math.imul(tile.cx, 73856093) ^ Math.imul(tile.cz, 19349663)) >>> 0);
+    const pick = () => {
+      let r = rng();
+      for (const key of keys) {
+        if (r < mix[key]) return key;
+        r -= mix[key];
+      }
+      return keys[0];
+    };
+    const trees = {};
+    for (const key of keys) trees[key] = [];
+    const density = prof.density || 1;
+    const attempts = Math.round((size * size) / 150 * density);
+    // Road chunks plant their own dense verge. Tile scenery starts outside
+    // that band so the same tree is never generated twice.
+    const roadClear = Math.max(96, this.halfWidth + (prof.edge || 6.5) + 72);
+    const x0 = tile.cx * size;
+    const z0 = tile.cz * size;
+    for (let i = 0; i < attempts; i++) {
+      const x = x0 + 7 + rng() * (size - 14);
+      const z = z0 + 7 + rng() * (size - 14);
+      const near = this._nearestWorldIndex(x, z);
+      const s = this.samples[near.index];
+      const lateral = (x - s.pos.x) * s.right.x + (z - s.pos.z) * s.right.z;
+      if (Math.abs(lateral) < roadClear) continue;
+      if (this.roadNetwork && this.roadNetwork.isNearRoad(x, z, 5)) continue;
+      if (this._isExcluded(x, z)) continue;
+      const type = pick();
+      if (!this._treeAssets[type] || trees[type].length > Math.ceil(attempts * 0.7)) continue;
+      trees[type].push({
+        x,
+        y: this.heightAtSample(near.index, lateral),
+        z,
+        scale: (prof.scale || 1) * (0.65 + rng() * 0.7),
+        rot: rng() * Math.PI * 2,
+        tiltX: (rng() - 0.5) * 0.07,
+        tiltZ: (rng() - 0.5) * 0.07,
+      });
+    }
+    for (const [type, items] of Object.entries(trees)) {
+      if (items.length) this._addTreeSet(tile.group, items, type, rng, q, tile.group);
+    }
+    // Scattered boulders stop the open ground reading as an empty plane.
+    const rocks = [];
+    const rockAttempts = Math.round(size / 22 * density);
+    for (let i = 0; i < rockAttempts; i++) {
+      const x = x0 + 6 + rng() * (size - 12);
+      const z = z0 + 6 + rng() * (size - 12);
+      const near = this._nearestWorldIndex(x, z);
+      const s = this.samples[near.index];
+      const lateral = (x - s.pos.x) * s.right.x + (z - s.pos.z) * s.right.z;
+      if (Math.abs(lateral) < roadClear * 0.7) continue;
+      if (this.roadNetwork && this.roadNetwork.isNearRoad(x, z, 4)) continue;
+      if (this._isExcluded(x, z)) continue;
+      rocks.push({
+        x,
+        z,
+        y: this.heightAtSample(near.index, lateral) + 0.15,
+        scale: 0.5 + Math.pow(rng(), 1.4) * 1.8,
+        rot: rng() * Math.PI * 2,
+      });
+    }
+    if (rocks.length && this._detailAssets?.rock) {
+      const asset = this._detailAssets.rock;
+      const mesh = this._instanced(asset.geo, asset.mat, rocks, () => {
+        const base = new THREE.Color(this.env.rock || 0x6e7064).lerp(new THREE.Color(0xffffff), 0.45);
+        return base.multiplyScalar(0.72 + rng() * 0.35);
+      });
+      if (mesh) {
+        mesh.castShadow = q === 'high';
+        tile.group.add(mesh);
+        this._addDetailColliders('rock', rocks, mesh, tile.group);
+      }
+    }
   }
 
   _addChunkRoad(group, i0, i1) {
