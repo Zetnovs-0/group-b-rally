@@ -997,7 +997,10 @@ export class Game {
     if (!p.info || p.info.offRoad) return;
     const speed = p.speedKph || 0;
     const slip = Math.abs(p.lateralSpeed || 0);
-    const active = speed > 10 && (slip > 2.2 || (p.handbrake || 0) > 0.3);
+    const locked = (p.brakeLock || 0) > 0.28;
+    const spinning = (p.wheelspin || 0) > 0.5;
+    const active = speed > 10 &&
+      (slip > 2.2 || (p.handbrake || 0) > 0.3 || locked || (spinning && speed > 25));
     if (!active) {
       this.skidAccum = 0;
       return;

@@ -24,7 +24,8 @@ export const DEFAULT_SETTINGS = {
 };
 
 /* ---------- Cars ---------- */
-/* power = bhp, weight = kg, grip = lateral grip coefficient (1.0 = decent) */
+/* power = bhp, weight = kg, grip = lateral grip coefficient (1.0 = decent),
+   frontWeight = static front-axle load share (0.5 = 50/50) */
 export const CARS = [
   {
     id: 'quattro',
@@ -37,6 +38,7 @@ export const CARS = [
     engine: '2.1L · 5-CYL TURBO',
     power: 476,
     weight: 1090,
+    frontWeight: 0.58,
     grip: 1.13,
     topSpeed: 232,
     brake: 1.04,
@@ -64,6 +66,7 @@ export const CARS = [
     engine: '1.8L · 4-CYL TWINCHARGED',
     power: 480,
     weight: 890,
+    frontWeight: 0.47,
     grip: 1.09,
     topSpeed: 236,
     brake: 1.02,
@@ -91,6 +94,7 @@ export const CARS = [
     engine: '1.8L · 4-CYL TURBO',
     power: 499,
     weight: 910,
+    frontWeight: 0.45,
     grip: 1.16,
     topSpeed: 240,
     brake: 1.0,
@@ -118,6 +122,7 @@ export const CARS = [
     engine: '1.8L · 4-CYL TURBO',
     power: 450,
     weight: 1050,
+    frontWeight: 0.44,
     grip: 1.07,
     topSpeed: 228,
     brake: 1.0,
@@ -145,6 +150,7 @@ export const CARS = [
     engine: '2.0L · 4-CYL SUPERCHARGED',
     power: 325,
     weight: 960,
+    frontWeight: 0.54,
     grip: 0.98,
     topSpeed: 216,
     brake: 0.94,
@@ -172,6 +178,7 @@ export const CARS = [
     engine: '1.4L · 4-CYL TURBO',
     power: 350,
     weight: 970,
+    frontWeight: 0.42,
     grip: 1.01,
     topSpeed: 220,
     brake: 0.95,

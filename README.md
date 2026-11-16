@@ -78,12 +78,14 @@ Every stage can be run in any combination of conditions. Both are selectable fro
 - **Auto** keeps each stage's authored default look; pick dawn, dusk or night for a different mood.
 
 ### Driving model
-- Bicycle-style steering with a progressive lock, fast steering rack and a grip-limited yaw cap. Turn-in is direct, the car bites when you ask it to, and the front end no longer floats through long corners.
-- Higher lateral tyre damping and a quicker yaw response keep the car planted, while a deliberate slip window still lets you move it around on the throttle and handbrake.
-- Weight and power affect acceleration, braking and momentum; drivetrain layout gives different characteristics (AWD launch/neutrality, RWD throttle-oversteer, FWD understeer).
-- Each car has its own grip figure and tyre package.
-- Surface grip changes by biome and by hazard patches: loose gravel, mud, water, roots, black ice, deep snow, wet tarmac, moss, sand and fesh-fesh.
-- Handbrake rotates the car but cuts lateral grip and scrubs speed.
+- Bicycle-model vehicle dynamics: front and rear slip angles produce the cornering forces, with a slip-angle curve that peaks and then falls away instead of gripping indefinitely.
+- Steering has a speed-sensitive lock, a real rack rate and self-centring return. The car asks for a slip angle rather than snapping to a yaw rate.
+- Longitudinal load transfer under acceleration and braking changes front/rear grip. Brake balance follows the dynamic front/rear load, so threshold braking is strong but the rear stays settled; locking the brakes costs steering and leaves lock-up marks.
+- A torque-curve engine, six-speed automatic gearbox, clutch-cut shifts, engine braking, turbo spool and aero drag make acceleration and coasting speed-dependent. Wheels can spin or lock and the combined-slip tyre model reduces cornering grip when you use the tyres for braking or traction.
+- Weight, centre-of-mass position and drivetrain layout affect the balance: AWD launch and neutrality, RWD throttle-oversteer, FWD understeer.
+- Each car has its own grip figure, brake coefficient and tyre package.
+- Surface grip changes by biome and by hazard patches: loose gravel, mud, water, roots, black ice, deep snow, wet tarmac, moss, sand and fesh-fesh. Rolling resistance and engine braking change with the surface too.
+- Handbrake locks the rear axle, cuts rear lateral grip and rotates the car while scrubbing speed.
 - Turbo boost builds with lag; engine/induction/turbo audio follows the revs.
 - The stage surface, ruts, snow banks, roadside markers and tree line affect the visual and physical route.
 - Start/finish gantry posts are solid; the tree line is a hard corridor boundary.
