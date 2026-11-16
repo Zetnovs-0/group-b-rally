@@ -630,8 +630,120 @@ export function makeGroundTexture(biome) {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  } else if (biome === 'coast') {
+    noiseFill(ctx, 512, 512, [[113, 108, 61], [98, 94, 53], [132, 124, 72], [88, 84, 48]], rng);
+    for (let i = 0; i < 46; i++) {
+      ctx.globalAlpha = 0.08 + rng() * 0.17;
+      ctx.fillStyle = rng() > 0.45 ? '#b8a875' : '#6f6d3c';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 14 + rng() * 76, 8 + rng() * 38, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    speckles(ctx, 512, 512, 7000, rng, ['#8d8a51', '#c2b57c', '#69653a', '#a99a63', '#56552f'], 0.45, 2.8);
+    for (let i = 0; i < 150; i++) {
+      ctx.globalAlpha = 0.22 + rng() * 0.35;
+      ctx.strokeStyle = rng() > 0.5 ? '#a8a45f' : '#7b8043';
+      ctx.lineWidth = 0.7 + rng() * 1.0;
+      const x = rng() * 512, y = rng() * 512;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rng() - 0.5) * 11, y - 4 - rng() * 15);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (biome === 'alpine') {
+    noiseFill(ctx, 512, 512, [[91, 108, 66], [78, 94, 56], [107, 121, 76], [68, 82, 49]], rng);
+    for (let i = 0; i < 58; i++) {
+      ctx.globalAlpha = 0.07 + rng() * 0.16;
+      ctx.fillStyle = rng() > 0.5 ? '#bcc5a0' : '#4c5e3a';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 18 + rng() * 92, 10 + rng() * 46, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    speckles(ctx, 512, 512, 6500, rng, ['#718353', '#aeb58d', '#5b6a45', '#c4c6a8', '#46563a'], 0.5, 3.2);
+    // exposed limestone chips and tufted alpine grass
+    for (let i = 0; i < 85; i++) {
+      ctx.globalAlpha = 0.3 + rng() * 0.4;
+      ctx.fillStyle = '#9c9d8e';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 1.5 + rng() * 5, 1 + rng() * 3.5, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 120; i++) {
+      ctx.globalAlpha = 0.2 + rng() * 0.35;
+      ctx.strokeStyle = rng() > 0.5 ? '#a7b478' : '#79894f';
+      ctx.lineWidth = 0.8;
+      const x = rng() * 512, y = rng() * 512;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rng() - 0.5) * 8, y - 4 - rng() * 13);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (biome === 'eifel') {
+    noiseFill(ctx, 512, 512, [[61, 76, 43], [52, 66, 37], [74, 86, 50], [43, 56, 32]], rng);
+    for (let i = 0; i < 55; i++) {
+      ctx.globalAlpha = 0.07 + rng() * 0.16;
+      ctx.fillStyle = rng() > 0.5 ? '#8a9657' : '#364528';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 15 + rng() * 82, 9 + rng() * 42, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    speckles(ctx, 512, 512, 7200, rng, ['#4d5e34', '#8d9b5e', '#6c5b3d', '#a18e58', '#394a2a'], 0.5, 3.1);
+    for (let i = 0; i < 62; i++) {
+      const x = rng() * 512, y = rng() * 512, r = 2 + rng() * 6;
+      ctx.globalAlpha = 0.3 + rng() * 0.4;
+      ctx.fillStyle = rng() > 0.55 ? '#a37e45' : '#7c673c';
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * 0.45, rng() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 150; i++) {
+      ctx.globalAlpha = 0.22 + rng() * 0.4;
+      ctx.strokeStyle = rng() > 0.5 ? '#95a35f' : '#6f7c43';
+      ctx.lineWidth = 0.8 + rng() * 1.1;
+      const x = rng() * 512, y = rng() * 512;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rng() - 0.5) * 8, y - 4 - rng() * 15);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (biome === 'tuscany') {
+    noiseFill(ctx, 512, 512, [[156, 143, 85], [139, 126, 73], [173, 158, 99], [122, 112, 65]], rng);
+    for (let i = 0; i < 52; i++) {
+      ctx.globalAlpha = 0.07 + rng() * 0.16;
+      ctx.fillStyle = rng() > 0.45 ? '#c4b77c' : '#7d7a48';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 16 + rng() * 90, 9 + rng() * 46, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    speckles(ctx, 512, 512, 7400, rng, ['#a39b5e', '#80743f', '#c1b276', '#6f6739', '#b8a465'], 0.5, 3.0);
+    for (let i = 0; i < 150; i++) {
+      ctx.globalAlpha = 0.24 + rng() * 0.4;
+      ctx.strokeStyle = rng() > 0.5 ? '#b7ab6b' : '#8d8850';
+      ctx.lineWidth = 0.7 + rng() * 1.0;
+      const x = rng() * 512, y = rng() * 512;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rng() - 0.5) * 11, y - 4 - rng() * 14);
+      ctx.stroke();
+    }
+    // dry poppy/straw flecks
+    for (let i = 0; i < 55; i++) {
+      ctx.globalAlpha = 0.3 + rng() * 0.4;
+      ctx.fillStyle = rng() > 0.7 ? '#b9583e' : '#d5c079';
+      ctx.beginPath();
+      ctx.ellipse(rng() * 512, rng() * 512, 1 + rng() * 2.4, 1 + rng() * 2, rng() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   } else {
-    // forest floor: damp green grass, moss, leaf litter, fallen twigs
     noiseFill(ctx, 512, 512, [[66, 78, 44], [57, 68, 38], [79, 88, 50], [47, 57, 32]], rng);
     for (let i = 0; i < 64; i++) {
       ctx.globalAlpha = 0.08 + rng() * 0.17;
@@ -876,7 +988,7 @@ export function makeSideDecal(car) {
   ctx.fillText(car.short, 340, 186);
   ctx.fillStyle = 'rgba(23,23,20,.75)';
   ctx.font = '600 22px "Barlow Condensed", sans-serif';
-  ctx.fillText('RALLY LEGENDS · GROUP B', 342, 218);
+  ctx.fillText(`${car.series || 'GROUP B'} · RALLY LEGENDS`, 342, 218);
   // small technical decals
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(25,25,22,.55)';

@@ -16,6 +16,7 @@ import { WeatherFX } from './weather.js';
 import { Headlights, WindscreenFX } from './effects.js';
 import { TouchControls } from './touch.js';
 import { PostFX } from './postfx.js';
+import { DestructionSystem } from './destruction.js';
 
 const PHYS_STEP = 1 / 120;
 
@@ -73,6 +74,7 @@ export class Game {
     this.weather = null;
     this.headlights = null;
     this.glassFx = null;
+    this.destruction = null;
     this.conditions = null;
     this.baseStage = null;
     this.cameraMode = CAMERA_MODES.some((m) => m.id === this.settings.camera)
@@ -333,6 +335,7 @@ export class Game {
     this.ui.setLoading(64, 'PLANTING THE CANOPY');
     await nextFrame();
     this.track.buildScenery(this.scene, quality);
+    this.destruction = new DestructionSystem(this.scene, this.track);
     if (this.track.endless) {
       this.track.streamEndless(this.track.samples[3].pos);
     }
@@ -355,6 +358,12 @@ export class Game {
       onImpact: (strength) => {
         this.shakeImpulse = Math.min(1.3, this.shakeImpulse + strength * 1.1);
         this.audio.impact(strength);
+      },
+      onBreak: (collider, impact) => {
+        this.destruction?.breakObject(collider, impact, this.physics?.vel);
+        this.audio.impact(Math.min(1, 0.35 + impact / 24));
+        this.audio.shatter(Math.min(1.2, 0.45 + impact / 20));
+        this.shakeImpulse = Math.min(1.5, this.shakeImpulse + 0.22 + impact * 0.018);
       },
     });
     this.cockpit = new Cockpit({ track: this.track, stage, car, settings: this.settings });
@@ -639,6 +648,7 @@ export class Game {
     this._announceNotes(dt);
     this._updateWeather(dt);
     this._emitSkids(dt);
+    this.destruction?.update(dt, this.physics.pos);
     this.track.updateSun(this.physics.pos, dt);
     this.audio.update(dt, this._audioState());
     this.renderScene();
@@ -665,6 +675,7 @@ export class Game {
     this._updateCamera(dt, false);
     this._updateCockpit(dt, false);
     this._updateWeather(dt);
+    this.destruction?.update(dt, this.physics.pos);
     this.audio.update(dt, this._audioState());
     this.track.updateSun(this.physics.pos, dt);
     this.renderScene();
@@ -1150,6 +1161,8 @@ export class Game {
   _disposeStage() {
     this.audio.setEngine(false);
     this.audio.hushVoice();
+    this.destruction?.dispose();
+    this.destruction = null;
     if (this.headlights) this.headlights.dispose();
     if (this.scene) {
       disposeObject(this.scene);
@@ -1195,6 +1208,8 @@ export class Game {
       chunks: this.track?.chunks?.length,
       gears: this.physics?.gear,
       rpm: this.physics?.rpm,
+      colliders: this.track?.colliders?.length,
+      sideRoads: this.track?.roadNetwork?.debug?.(),
     };
   }
 }

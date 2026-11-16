@@ -12,6 +12,7 @@ import {
   makeIceTexture, makeWaterfallTexture, makeAnimalTexture, makeSoftDotTexture,
 } from './textures.js';
 import { EndlessRoute } from './endlessRoute.js';
+import { RoadNetwork } from './roadNetwork.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const TMP = new THREE.Object3D();
@@ -110,11 +111,22 @@ export class Track {
     this.featureMeshes = [];
     this.landmarks = {};
 
+    // Static prop collisions. Colliders live in a spatial hash so the car can
+    // hit trees/rocks anywhere in the world without an O(n) scan every step.
+    this.colliders = [];
+    this.colliderGrid = new Map();
+    this.colliderCell = 9;
+    this.worldBound = 250;
+
     this._buildSamples();
     this._buildHazards();
     this._buildPacenotes();
     this._buildMapProjection();
     this._buildGripProfiles();
+    if (this.endless) {
+      this.roadNetwork = new RoadNetwork(this);
+      this.roadNetwork.generateAvailable(this.length);
+    }
   }
 
   /* ---------------- sampling ---------------- */
@@ -231,6 +243,7 @@ export class Track {
     this._addEndlessHazards(first);
     this._applyEndlessGrip(first);
     this._sortEndlessNotes();
+    this.roadNetwork?.generateAvailable(this.length);
     return this.length;
   }
 
@@ -435,6 +448,7 @@ export class Track {
     if (this.length < dist + 1100) {
       this._extendEndlessSamples(Math.max(700, dist + 1500 - this.length));
     }
+    this.roadNetwork?.update(dist);
     if (this._scene) this._buildEndlessChunks(false);
     const cutoff = dist - 520;
     while (this.chunks.length && this.chunks[0].dist1 < cutoff) {
@@ -521,6 +535,99 @@ export class Track {
       if (s.hazardLabel) s.surfaceName = s.hazardLabel;
       else s.surfaceName = this.env.surfaceName;
     }
+  }
+
+  /* ---------------- colliders ---------------- */
+  _colliderKey(x, z) {
+    const c = this.colliderCell;
+    return `${Math.floor(x / c)},${Math.floor(z / c)}`;
+  }
+
+  _addCollider(c) {
+    if (!c || !isFinite(c.x) || !isFinite(c.z)) return null;
+    c.broken = false;
+    c.removed = false;
+    c.cellKey = this._colliderKey(c.x, c.z);
+    let bucket = this.colliderGrid.get(c.cellKey);
+    if (!bucket) {
+      bucket = [];
+      this.colliderGrid.set(c.cellKey, bucket);
+    }
+    bucket.push(c);
+    c.bucket = bucket;
+    this.colliders.push(c);
+    if (c.owner) {
+      if (!c.owner.userData.colliders) c.owner.userData.colliders = [];
+      c.owner.userData.colliders.push(c);
+    }
+    return c;
+  }
+
+  _removeCollider(c) {
+    if (!c || c.removed) return;
+    c.removed = true;
+    const bucket = c.bucket;
+    if (bucket) {
+      const i = bucket.indexOf(c);
+      if (i >= 0) bucket.splice(i, 1);
+    }
+    const all = this.colliders;
+    const j = all.indexOf(c);
+    if (j >= 0) all.splice(j, 1);
+    if (c.owner && c.owner.userData.colliders) {
+      const k = c.owner.userData.colliders.indexOf(c);
+      if (k >= 0) c.owner.userData.colliders.splice(k, 1);
+    }
+  }
+
+  collidersNear(x, z, radius = 2) {
+    const out = [];
+    const cell = this.colliderCell;
+    const minCx = Math.floor((x - radius) / cell);
+    const maxCx = Math.floor((x + radius) / cell);
+    const minCz = Math.floor((z - radius) / cell);
+    const maxCz = Math.floor((z + radius) / cell);
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cz = minCz; cz <= maxCz; cz++) {
+        const bucket = this.colliderGrid.get(`${cx},${cz}`);
+        if (!bucket) continue;
+        for (const c of bucket) {
+          if (!c.broken && !c.removed) out.push(c);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Break a tree / rock / post. Instanced parts are zeroed and the collider
+   *  is removed from the collision grid immediately. */
+  breakCollider(c) {
+    if (!c || c.broken) return false;
+    c.broken = true;
+    for (const part of c.parts || []) {
+      const mesh = part.mesh;
+      if (!mesh) continue;
+      TMP.position.set(0, -9999, 0);
+      TMP.rotation.set(0, 0, 0);
+      TMP.scale.setScalar(0.0001);
+      TMP.updateMatrix();
+      mesh.setMatrixAt(part.index, TMP.matrix);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    this._removeCollider(c);
+    return true;
+  }
+
+  _removeCollidersForOwner(owner) {
+    if (!owner || !owner.userData.colliders) return;
+    const list = owner.userData.colliders.slice();
+    for (const c of list) this._removeCollider(c);
+    owner.userData.colliders.length = 0;
+  }
+
+  _groundHeightAt(x, z) {
+    const info = this.nearest(new THREE.Vector3(x, 0, z), -1);
+    return info.height;
   }
 
   /* ---------------- pacenotes ---------------- */
@@ -753,6 +860,44 @@ export class Track {
 
   nearestGlobal(pos) {
     return this.nearest(pos, -1);
+  }
+
+  /** Combined main-road/side-road surface query used by the car. Progress,
+   *  notes and timing still come from the main route; surface, height and
+   *  grip may come from a side road when you are actually on it. */
+  driveAt(pos, hint = this.lastIndexHint) {
+    const main = this.nearest(pos, hint);
+    const side = this.roadNetwork ? this.roadNetwork.nearest(pos) : null;
+    if (side && side.absLat <= side.road.halfWidth + 0.75 &&
+        side.absLat + 0.4 < main.absLat) {
+      return {
+        ...main,
+        onSideRoad: true,
+        sideRoad: side.road,
+        center: side.center,
+        tangent: side.tangent,
+        right: side.right,
+        lateral: side.lateral,
+        absLat: side.absLat,
+        height: side.height,
+        grip: side.grip,
+        surfaceName: side.surfaceName,
+        offRoad: side.offRoad,
+        heading: side.heading,
+        mainLateral: main.lateral,
+        mainAbsLat: main.absLat,
+        mainCenter: main.center,
+        mainRight: main.right,
+      };
+    }
+    return {
+      ...main,
+      onSideRoad: false,
+      mainLateral: main.lateral,
+      mainAbsLat: main.absLat,
+      mainCenter: main.center,
+      mainRight: main.right,
+    };
   }
 
   roadCrown(lateral) {
@@ -1454,8 +1599,9 @@ export class Track {
   }
 
   _nearestIndexFast(x, z) {
-    if (!this._coarse) {
+    if (!this._coarse || this._coarseN !== this.n) {
       this._coarse = [];
+      this._coarseN = this.n;
       const stride = 5;
       for (let i = 0; i < this.n; i += stride) this._coarse.push(i);
     }
@@ -1486,6 +1632,7 @@ export class Track {
     }
     const step = quality === 'high' ? 4.4 : quality === 'medium' ? 6.2 : 8.5;
     const pad = quality === 'high' ? 95 : quality === 'medium' ? 72 : 46;
+    this.worldBound = quality === 'high' ? 95 : quality === 'medium' ? 80 : 60;
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     for (const s of this.samples) {
       minX = Math.min(minX, s.pos.x); maxX = Math.max(maxX, s.pos.x);
@@ -2091,7 +2238,8 @@ export class Track {
 
   /* ---------------- Japan-style guardrail ---------------- */
   _addGuardrails(scene, quality) {
-    if (this.stage.biome !== 'japan') return;
+    const biome = this.stage.biome;
+    if (biome !== 'japan' && biome !== 'coast' && biome !== 'alpine') return;
     const step = 2;
     const railSegs = [];
     const postPts = [];
@@ -2243,7 +2391,7 @@ export class Track {
 
   _addChevrons(scene, quality) {
     const biome = this.stage.biome;
-    if (biome !== 'japan' && biome !== 'snow') return;
+    if (biome !== 'japan' && biome !== 'snow' && biome !== 'coast' && biome !== 'alpine') return;
     const tex = this._chevronTexture();
     const mat = new THREE.MeshStandardMaterial({
       map: tex, side: THREE.DoubleSide, roughness: 0.7,
@@ -2275,7 +2423,7 @@ export class Track {
 
   _addUtilityPoles(scene, quality) {
     const biome = this.stage.biome;
-    if (!['forest', 'russia', 'japan'].includes(biome)) return;
+    if (!['forest', 'russia', 'japan', 'eifel', 'tuscany', 'coast'].includes(biome)) return;
     const rng = mulberry32(this.seed + 431);
     const poles = [];
     let side = rng() < 0.5 ? 1 : -1;
@@ -2347,15 +2495,16 @@ export class Track {
 
   _addCliffs(scene, quality) {
     const biome = this.stage.biome;
-    if (biome !== 'japan' && biome !== 'jungle') return;
+    const mountain = biome === 'japan' || biome === 'coast' || biome === 'alpine';
+    if (!mountain && biome !== 'jungle') return;
     const rng = mulberry32(this.seed + 612);
     const rocks = [];
     for (let i = 18; i < this.n - 20; i += 5) {
       if (rng() < 0.42) continue;
       let side;
-      if (biome === 'japan') side = this.mountainSideAt(this.samples[i].dist);
+      if (mountain) side = this.mountainSideAt(this.samples[i].dist);
       else side = rng() < 0.5 ? -1 : 1;
-      const dist = biome === 'japan' ? 12.5 + rng() * 15 : 8 + rng() * 16;
+      const dist = mountain ? 12.5 + rng() * 15 : 8 + rng() * 16;
       const lat = side * (this.halfWidth + dist);
       const rx = this.samples[i].pos.x + this.samples[i].right.x * lat;
       const rz = this.samples[i].pos.z + this.samples[i].right.z * lat;
@@ -2515,6 +2664,7 @@ export class Track {
   }
 
   _isExcluded(x, z) {
+    if (this.roadNetwork && this.roadNetwork.isNearRoad(x, z, 3.4)) return true;
     if (!this.exclusionZones.length) return false;
     for (const zone of this.exclusionZones) {
       const dx = x - zone.x;
@@ -4058,6 +4208,10 @@ export class Track {
       japan: { rings: 2, hMin: 60, hMax: 165, wMin: 160, wMax: 300, blend: 0.66, opacity: 0.74, snow: true, flat: 0.9 },
       russia: { rings: 2, hMin: 15, hMax: 38, wMin: 220, wMax: 400, blend: 0.8, opacity: 0.42, snow: false, flat: 1 },
       safari: { rings: 2, hMin: 38, hMax: 95, wMin: 240, wMax: 460, blend: 0.58, opacity: 0.52, snow: false, flat: 0.55 },
+      coast: { rings: 2, hMin: 55, hMax: 150, wMin: 190, wMax: 360, blend: 0.6, opacity: 0.68, snow: false, flat: 0.85 },
+      alpine: { rings: 2, hMin: 70, hMax: 190, wMin: 180, wMax: 340, blend: 0.56, opacity: 0.76, snow: true, flat: 0.94 },
+      eifel: { rings: 2, hMin: 22, hMax: 58, wMin: 170, wMax: 310, blend: 0.8, opacity: 0.5, snow: false, flat: 1 },
+      tuscany: { rings: 2, hMin: 30, hMax: 78, wMin: 210, wMax: 390, blend: 0.78, opacity: 0.46, snow: false, flat: 0.95 },
     }[biome] || { rings: 2, hMin: 30, hMax: 80, wMin: 180, wMax: 300, blend: 0.8, opacity: 0.55, snow: false, flat: 1 };
 
     for (let ring = 0; ring < style.rings; ring++) {
@@ -4216,7 +4370,11 @@ export class Track {
       const y = (this._terrainGrid && Math.abs(lat) > this.halfWidth + 6)
         ? this.terrainHeightAt(x, z)
         : this.heightAtSample(idx, lat);
-      return { x, y, z, scale, rot, index: idx };
+      return {
+        x, y, z, scale, rot, index: idx,
+        tiltX: (rng() - 0.5) * 0.055,
+        tiltZ: (rng() - 0.5) * 0.055,
+      };
     };
     const underKind = () => {
       let r = rng();
@@ -4361,13 +4519,24 @@ export class Track {
     return mesh;
   }
 
-  _planeCross(width, height, count = 3, y = 0) {
+  _planeCross(width, height, count = 3, y = 0, horizontal = false) {
     const parts = [];
     for (let i = 0; i < count; i++) {
       const g = new THREE.PlaneGeometry(width, height);
       g.rotateY((i / count) * Math.PI);
       g.translate(0, y + height * 0.5, 0);
       parts.push(g);
+    }
+    if (horizontal) {
+      // Two horizontal sheets give the canopy a top silhouette from chase and
+      // bonnet cameras instead of only reading as flat vertical cards.
+      for (const k of [0.4, 0.66]) {
+        const g = new THREE.PlaneGeometry(width * 0.76, width * 0.68);
+        g.rotateX(-Math.PI / 2);
+        g.rotateY(k * Math.PI);
+        g.translate(0, y + height * k, 0);
+        parts.push(g);
+      }
     }
     return mergeGeometries(parts);
   }
@@ -4376,30 +4545,55 @@ export class Track {
     const rng = mulberry32(this.seed + 451);
     const h = 11.5;
     const parts = [];
-    const segs = 6;
+    const segs = 8;
     let last = new THREE.Vector3(0, 0, 0);
     for (let i = 1; i <= segs; i++) {
       const t = i / segs;
       const next = new THREE.Vector3(Math.sin(t * 1.15) * 0.9, t * h, Math.cos(t * 1.15) * 0.3);
       const dir = new THREE.Vector3().subVectors(next, last);
-      const g = new THREE.CylinderGeometry(0.14 * (1 - t * 0.32), 0.25 * (1 - t * 0.22), dir.length(), 7);
+      const g = new THREE.CylinderGeometry(0.14 * (1 - t * 0.32), 0.25 * (1 - t * 0.22), dir.length(), 9);
       g.translate(0, dir.length() / 2, 0);
       g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, dir.clone().normalize()));
       g.translate(last.x, last.y, last.z);
       parts.push(g);
+      // scarified trunk rings give the palm a readable, non-cylindrical profile
+      if (i < segs) {
+        const ring = new THREE.CylinderGeometry(0.255 * (1 - t * 0.2), 0.275 * (1 - t * 0.2), 0.12, 9);
+        ring.translate(last.x + dir.x * 0.42, last.y + dir.y * 0.42, last.z + dir.z * 0.42);
+        parts.push(ring);
+      }
       last = next;
+    }
+    // root flare
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + rng() * 0.5;
+      const g = new THREE.CylinderGeometry(0.05, 0.18, 0.85, 5);
+      g.translate(0, 0.38, 0);
+      g.rotateZ(0.8 + rng() * 0.3);
+      g.rotateY(a);
+      parts.push(g);
     }
     const trunkGeo = mergeGeometries(parts);
     const fronds = [];
     const crown = last.clone();
-    const count = 11;
+    const count = 14;
     for (let i = 0; i < count; i++) {
-      const g = new THREE.PlaneGeometry(4.6 + rng() * 1.1, 1.15);
+      const g = new THREE.PlaneGeometry(4.6 + rng() * 1.4, 1.15 + rng() * 0.35);
       g.rotateX(-Math.PI / 2);
       g.translate(2.3, 0, 0);
-      g.rotateZ(-0.2 - rng() * 0.42);
+      g.rotateZ(-0.2 - rng() * 0.48);
       g.rotateY((i / count) * Math.PI * 2 + rng() * 0.32);
-      g.translate(crown.x, crown.y + (rng() - 0.5) * 0.3, crown.z);
+      g.translate(crown.x, crown.y + (rng() - 0.5) * 0.35, crown.z);
+      fronds.push(g);
+    }
+    // a shorter under-skirt of dead fronds
+    for (let i = 0; i < 5; i++) {
+      const g = new THREE.PlaneGeometry(3.1 + rng() * 0.7, 0.8);
+      g.rotateX(-Math.PI / 2);
+      g.translate(1.55, 0, 0);
+      g.rotateZ(0.28 + rng() * 0.38);
+      g.rotateY((i / 5) * Math.PI * 2 + 0.3);
+      g.translate(crown.x, crown.y - 0.28, crown.z);
       fronds.push(g);
     }
     const leafGeo = mergeGeometries(fronds);
@@ -4411,45 +4605,154 @@ export class Track {
       roughness: 0.94, metalness: 0,
       emissive: 0xffffff, emissiveMap: frondTex, emissiveIntensity: 0.16,
     });
-    return { trunkGeo, leafGeo, trunkMat, leafMat: frondMat, height: h, width: 9.8 };
+    return {
+      trunkGeo, leafGeo, trunkMat, leafMat: frondMat, height: h, width: 9.8,
+      collisionRadius: 0.3, breakSpeed: 12, colors: { bark: this.env.trunk, leaf: this.env.tree },
+    };
+  }
+
+  _jitterGeometry(geo, rng, amount = 0.18) {
+    const pos = geo.attributes.position;
+    if (!pos) return geo;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const j = 1 + (rng() - 0.5) * amount * 2;
+      pos.setXYZ(i, x * j, y * (1 + (rng() - 0.5) * amount), z * (1 + (rng() - 0.5) * amount));
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    return geo;
   }
 
   _solidCanopyGeometry(type, p, rng) {
     const parts = [];
     if (type === 'pine' || type === 'spruce' || type === 'cedar') {
-      const layers = type === 'cedar' ? 6 : 5;
+      const layers = type === 'cedar' ? 8 : type === 'spruce' ? 7 : 6;
       for (let k = 0; k < layers; k++) {
         const t = k / (layers - 1);
-        const y = p.h * (0.2 + t * 0.66);
-        const r = p.w * (type === 'cedar' ? 0.24 : 0.3) * (1 - t * 0.48);
-        const g = new THREE.IcosahedronGeometry(1, 1);
-        g.scale(r * (0.72 + rng() * 0.42), p.h * 0.13 * (0.8 + rng() * 0.5), r * (0.72 + rng() * 0.42));
-        g.translate((rng() - 0.5) * r * 0.8, y + (rng() - 0.5) * p.h * 0.035, (rng() - 0.5) * r * 0.8);
+        const y = p.h * (0.18 + t * 0.7);
+        const r = p.w * (type === 'cedar' ? 0.3 : 0.34) * (1 - t * 0.58);
+        const g = new THREE.ConeGeometry(
+          r * (0.82 + rng() * 0.3),
+          p.h * (0.12 + rng() * 0.06),
+          type === 'cedar' ? 8 : 7, 1
+        );
+        g.rotateY(rng() * Math.PI * 2);
+        this._jitterGeometry(g, rng, type === 'cedar' ? 0.1 : 0.16);
+        g.translate((rng() - 0.5) * r * 0.65, y + (rng() - 0.5) * p.h * 0.03, (rng() - 0.5) * r * 0.65);
         parts.push(g);
       }
+      // A narrow crown spire stops the tiers reading as separate stacked cones.
+      const tip = new THREE.ConeGeometry(p.w * 0.09, p.h * 0.2, 6, 1);
+      tip.translate(0, p.h * 0.89, 0);
+      parts.push(tip);
     } else if (type === 'acacia' || type === 'baobab') {
       const leafY = p.h * (p.canopyY || 0);
       const leafH = p.canopyH || (p.h - leafY);
-      const cy = leafY + leafH * 0.45;
-      const rw = (p.canopyW || p.w) * 0.26;
-      for (let i = 0; i < (type === 'acacia' ? 4 : 3); i++) {
+      const cy = leafY + leafH * 0.48;
+      const rw = (p.canopyW || p.w) * 0.3;
+      const lobes = type === 'acacia' ? 9 : 7;
+      for (let i = 0; i < lobes; i++) {
         const g = new THREE.IcosahedronGeometry(1, 1);
-        g.scale(rw * (1.0 + rng() * 0.8), leafH * (0.18 + rng() * 0.14), rw * (1.0 + rng() * 0.8));
-        g.translate((rng() - 0.5) * rw * 1.6, cy + (rng() - 0.5) * leafH * 0.4, (rng() - 0.5) * rw * 1.6);
+        const spread = type === 'acacia' ? 1 : 0.7;
+        g.scale(
+          rw * (0.55 + rng() * 0.9) * spread,
+          leafH * (0.1 + rng() * 0.13),
+          rw * (0.55 + rng() * 0.9) * spread
+        );
+        this._jitterGeometry(g, rng, 0.14);
+        g.translate(
+          (rng() - 0.5) * rw * 1.9,
+          cy + (rng() - 0.5) * leafH * 0.45,
+          (rng() - 0.5) * rw * 1.9
+        );
         parts.push(g);
       }
     } else {
       const leafY = p.h * (p.canopyY || 0);
       const leafH = p.canopyH || (p.h - leafY);
-      const cy = leafY + leafH * 0.47;
+      const cy = leafY + leafH * 0.48;
       const rw = (p.canopyW || p.w) * 0.3;
       const rh = leafH * 0.32;
-      const count = type === 'birch' ? 3 : 5;
+      const count = type === 'birch' ? 7 : type === 'oak' ? 11 : 9;
       for (let i = 0; i < count; i++) {
         const g = new THREE.IcosahedronGeometry(1, 1);
-        g.scale(rw * (0.55 + rng() * 0.55), rh * (0.55 + rng() * 0.55), rw * (0.55 + rng() * 0.55));
-        g.translate((rng() - 0.5) * rw * 1.55, cy + (rng() - 0.5) * rh * 1.5, (rng() - 0.5) * rw * 1.55);
+        const r = 0.42 + rng() * 0.68;
+        g.scale(rw * r, rh * (0.5 + rng() * 0.75), rw * r);
+        this._jitterGeometry(g, rng, 0.18);
+        const ang = (i / count) * Math.PI * 2 + rng() * 0.5;
+        const rad = rw * (0.18 + rng() * 0.72);
+        g.translate(
+          Math.cos(ang) * rad,
+          cy + (rng() - 0.5) * rh * 1.9,
+          Math.sin(ang) * rad
+        );
         parts.push(g);
+      }
+    }
+    return mergeGeometries(parts);
+  }
+
+  _treeTrunkGeometry(type, p, rng) {
+    const parts = [];
+    const segs = type === 'birch' ? 2 : 3;
+    let y = 0;
+    let r = p.trunkR;
+    for (let i = 0; i < segs; i++) {
+      const t = (i + 1) / segs;
+      const nextR = p.trunkR * (0.5 - t * 0.2);
+      const hgt = p.trunkH / segs;
+      const g = new THREE.CylinderGeometry(nextR, r, hgt, 8);
+      g.translate((rng() - 0.5) * 0.04, y + hgt / 2, (rng() - 0.5) * 0.04);
+      parts.push(g);
+      y += hgt;
+      r = nextR;
+    }
+    // Buttressed roots. Broadleaf trees get four or five; conifers two small ones.
+    const rootCount = type === 'birch' ? 2 : type === 'pine' || type === 'spruce' || type === 'cedar' ? 3 : 5;
+    for (let i = 0; i < rootCount; i++) {
+      const a = (i / rootCount) * Math.PI * 2 + rng() * 0.45;
+      const len = (type === 'birch' ? 0.45 : 0.7) + rng() * (type === 'baobab' ? 1.1 : 0.65);
+      const g = new THREE.CylinderGeometry(0.035, p.trunkR * 0.36, len, 5);
+      g.translate(0, len * 0.32, 0);
+      g.rotateZ(0.95 + rng() * 0.3);
+      g.rotateY(a);
+      g.translate(0, 0.08, 0);
+      parts.push(g);
+    }
+    // Limbs. These are deliberately chunky where they leave the trunk and
+    // taper to fine tips, so the canopy has visible structure underneath it.
+    const limbs = type === 'pine' || type === 'spruce' || type === 'cedar' ? 4 : type === 'birch' ? 3 : 5;
+    for (let i = 0; i < limbs; i++) {
+      const baseY = p.trunkH * (type === 'birch' ? 0.55 + rng() * 0.2 : 0.48 + rng() * 0.33);
+      const ang = (i / limbs) * Math.PI * 2 + rng() * 0.8;
+      const reach = (type === 'acacia' ? 3.8 : type === 'baobab' ? 2.9 : p.w * 0.22) * (0.65 + rng() * 0.65);
+      const rise = (type === 'pine' || type === 'spruce' || type === 'cedar'
+        ? -0.2 - rng() * 0.5
+        : 0.5 + rng() * 1.1);
+      const start = new THREE.Vector3(0, baseY, 0);
+      const end = new THREE.Vector3(Math.cos(ang) * reach, baseY + rise, Math.sin(ang) * reach);
+      const dir = new THREE.Vector3().subVectors(end, start);
+      const len = dir.length();
+      const limbR = p.trunkR * (type === 'birch' ? 0.26 : 0.42) * (1 - (baseY / p.trunkH) * 0.42);
+      const g = new THREE.CylinderGeometry(0.025, limbR, len, 6);
+      g.translate(0, len / 2, 0);
+      g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, dir.clone().normalize()));
+      g.translate(start.x, start.y, start.z);
+      parts.push(g);
+      // one fork per limb
+      if (rng() < 0.7 && type !== 'birch') {
+        const d2 = dir.clone().normalize().multiplyScalar(len * (0.28 + rng() * 0.25));
+        const start2 = start.clone().add(d2);
+        const end2 = start2.clone().add(new THREE.Vector3(
+          Math.cos(ang + 0.7) * reach * 0.42, 0.3 + rng() * 0.6, Math.sin(ang + 0.7) * reach * 0.42
+        ));
+        const dir2 = new THREE.Vector3().subVectors(end2, start2);
+        const g2 = new THREE.CylinderGeometry(0.015, limbR * 0.55, dir2.length(), 5);
+        g2.translate(0, dir2.length() / 2, 0);
+        g2.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UP, dir2.normalize()));
+        g2.translate(start2.x, start2.y, start2.z);
+        parts.push(g2);
       }
     }
     return mergeGeometries(parts);
@@ -4461,15 +4764,15 @@ export class Track {
     const biome = this.stage.biome;
     const snowy = biome === 'snow';
     const profiles = {
-      pine: { h: 17, w: 9.2, trunkH: 15.5, bark: 'pine', tex: 'pine', planes: 3, trunkR: 0.21 },
-      spruce: { h: 13.5, w: 7.4, trunkH: 12.2, bark: 'pine', tex: 'spruce', planes: 3, trunkR: 0.18 },
-      cedar: { h: 20, w: 7.2, trunkH: 18.5, bark: 'cedar', tex: 'cedar', planes: 3, trunkR: 0.22 },
-      birch: { h: 12.5, w: 8.4, trunkH: 11.5, bark: 'birch', tex: 'birch', planes: 3, trunkR: 0.11, canopyY: 0.18 },
-      oak: { h: 12, w: 12.5, trunkH: 7.4, bark: 'oak', tex: 'oak', planes: 3, trunkR: 0.27, canopyY: 0.2 },
-      broad: { h: 15, w: 15, trunkH: 9.5, bark: 'oak', tex: 'oak', planes: 3, trunkR: 0.34, canopyY: 0.18 },
-      banana: { h: 5.2, w: 5.8, trunkH: 1.5, bark: 'palm', tex: 'banana', planes: 3, trunkR: 0.13, canopyY: 0 },
-      acacia: { h: 9, w: 7.4, trunkH: 6.0, bark: 'acacia', tex: 'acacia', planes: 3, trunkR: 0.22, canopyY: 0.38, canopyW: 16, canopyH: 6.8 },
-      baobab: { h: 10, w: 9.4, trunkH: 7.0, bark: 'baobab', tex: 'baobab', planes: 3, trunkR: 0.65, canopyY: 0.62, canopyW: 12, canopyH: 5.2 },
+      pine: { h: 17, w: 9.2, trunkH: 15.5, bark: 'pine', tex: 'pine', planes: 3, trunkR: 0.21, breakSpeed: 20 },
+      spruce: { h: 13.5, w: 7.4, trunkH: 12.2, bark: 'pine', tex: 'spruce', planes: 3, trunkR: 0.18, breakSpeed: 17 },
+      cedar: { h: 20, w: 7.2, trunkH: 18.5, bark: 'cedar', tex: 'cedar', planes: 3, trunkR: 0.22, breakSpeed: 22 },
+      birch: { h: 12.5, w: 8.4, trunkH: 11.5, bark: 'birch', tex: 'birch', planes: 3, trunkR: 0.11, canopyY: 0.18, breakSpeed: 12 },
+      oak: { h: 12, w: 12.5, trunkH: 7.4, bark: 'oak', tex: 'oak', planes: 3, trunkR: 0.27, canopyY: 0.2, breakSpeed: 25 },
+      broad: { h: 15, w: 15, trunkH: 9.5, bark: 'oak', tex: 'oak', planes: 3, trunkR: 0.34, canopyY: 0.18, breakSpeed: 30 },
+      banana: { h: 5.2, w: 5.8, trunkH: 1.5, bark: 'palm', tex: 'banana', planes: 3, trunkR: 0.13, canopyY: 0, breakSpeed: 9 },
+      acacia: { h: 9, w: 7.4, trunkH: 6.0, bark: 'acacia', tex: 'acacia', planes: 3, trunkR: 0.22, canopyY: 0.38, canopyW: 16, canopyH: 6.8, breakSpeed: 22 },
+      baobab: { h: 10, w: 9.4, trunkH: 7.0, bark: 'baobab', tex: 'baobab', planes: 3, trunkR: 0.65, canopyY: 0.62, canopyW: 12, canopyH: 5.2, breakSpeed: 48 },
     };
     const out = {};
     const barkCache = {};
@@ -4490,16 +4793,16 @@ export class Track {
             map: leafTex, alphaTest: 0.32, side: THREE.DoubleSide, roughness: 0.95,
             emissive: 0xffffff, emissiveMap: leafTex, emissiveIntensity: 0.18,
           }),
-          height: p.h, width: p.w,
+          height: p.h, width: p.w, collisionRadius: p.trunkR, breakSpeed: p.breakSpeed,
+          colors: { bark: env.trunk, leaf: env.tree },
         };
         continue;
       }
-      const trunkGeo = new THREE.CylinderGeometry(p.trunkR * 0.55, p.trunkR, p.trunkH, 7);
-      trunkGeo.translate(0, p.trunkH * 0.5, 0);
+      const trunkGeo = this._treeTrunkGeometry(type, p, rng);
       const leafY = p.h * (p.canopyY || 0);
       const leafW = p.canopyW || p.w;
       const leafH = p.canopyH || (p.h - leafY);
-      const leafGeo = this._planeCross(leafW, leafH, p.planes, leafY);
+      const leafGeo = this._planeCross(leafW, leafH, p.planes, leafY, true);
       if (!barkCache[p.bark]) barkCache[p.bark] = makeBarkTexture(p.bark);
       const barkTex = barkCache[p.bark];
       const trunkMat = new THREE.MeshStandardMaterial({ map: barkTex, roughness: 1 });
@@ -4516,17 +4819,21 @@ export class Track {
         solidGeo = this._solidCanopyGeometry(type, p, rng);
         const solidTex = makeLeafSurfaceTexture(p.tex, snowy);
         solidMat = new THREE.MeshStandardMaterial({
-          map: solidTex, roughness: 0.97, metalness: 0,
-          emissive: 0xffffff, emissiveMap: solidTex, emissiveIntensity: 0.1,
+          map: solidTex, roughness: 0.94, metalness: 0, flatShading: true,
+          emissive: 0xffffff, emissiveMap: solidTex, emissiveIntensity: 0.08,
         });
       }
-      out[type] = { trunkGeo, leafGeo, trunkMat, leafMat, solidGeo, solidMat, height: p.h, width: leafW };
+      out[type] = {
+        trunkGeo, leafGeo, trunkMat, leafMat, solidGeo, solidMat, height: p.h, width: leafW,
+        collisionRadius: p.trunkR, breakSpeed: p.breakSpeed || 18,
+        colors: { bark: env.trunk, leaf: env.tree },
+      };
     }
     out.palm = this._makePalmAssets();
     return out;
   }
 
-  _addTreeSet(parent, items, type, rng, quality) {
+  _addTreeSet(parent, items, type, rng, quality, owner = null) {
     if (!items || !items.length) return;
     const A = this._treeAssets || (this._treeAssets = this._makeTreeAssets());
     const asset = A[type];
@@ -4546,6 +4853,15 @@ export class Track {
       c.offsetHSL((rng() - 0.5) * 0.035, (rng() - 0.5) * 0.12, (rng() - 0.5) * 0.05);
       return c;
     });
+    let solid = null;
+    if (asset.solidGeo && asset.solidMat) {
+      solid = this._instanced(asset.solidGeo, asset.solidMat, items, () => {
+        const c = solidTint.clone().multiplyScalar(0.95 + rng() * 0.22);
+        c.offsetHSL((rng() - 0.5) * 0.03, (rng() - 0.5) * 0.1, (rng() - 0.5) * 0.04);
+        return c;
+      });
+    }
+    const meshes = [trunk, leaf, solid].filter(Boolean);
     if (trunk) {
       trunk.castShadow = quality === 'high';
       parent.add(trunk);
@@ -4555,17 +4871,27 @@ export class Track {
       leaf.receiveShadow = true;
       parent.add(leaf);
     }
-    if (asset.solidGeo && asset.solidMat) {
-      const solid = this._instanced(asset.solidGeo, asset.solidMat, items, () => {
-        const c = solidTint.clone().multiplyScalar(0.95 + rng() * 0.22);
-        c.offsetHSL((rng() - 0.5) * 0.03, (rng() - 0.5) * 0.1, (rng() - 0.5) * 0.04);
-        return c;
+    if (solid) {
+      solid.castShadow = quality === 'high';
+      solid.receiveShadow = true;
+      parent.add(solid);
+    }
+    // One trunk collider per tree. The canopy is deliberately not solid, so
+    // you can clip through branches after knocking the trunk over.
+    const baseR = asset.collisionRadius || 0.24;
+    const parts = meshes.map((mesh) => ({ mesh }));
+    for (let i = 0; i < items.length; i++) {
+      const t = items[i];
+      const scale = t.scale || 1;
+      const radius = Math.max(0.26, baseR * scale * 1.6 + 0.18);
+      this._addCollider({
+        x: t.x, z: t.z, y: t.y,
+        r: radius,
+        type: 'tree', kind: type, owner,
+        breakSpeed: asset.breakSpeed || 18,
+        colors: asset.colors,
+        parts: parts.map((p) => ({ mesh: p.mesh, index: i })),
       });
-      if (solid) {
-        solid.castShadow = quality === 'high';
-        solid.receiveShadow = true;
-        parent.add(solid);
-      }
     }
   }
 
@@ -4646,6 +4972,7 @@ export class Track {
       if (mesh) {
         mesh.castShadow = quality === 'high';
         scene.add(mesh);
+        this._addDetailColliders('rock', detail.rock, mesh, null);
       }
     }
     if (detail.log.length) {
@@ -4663,6 +4990,7 @@ export class Track {
       if (mesh) {
         mesh.castShadow = quality === 'high';
         scene.add(mesh);
+        this._addDetailColliders('log', detail.log, mesh, null);
       }
     }
     if (detail.stump.length) {
@@ -4670,7 +4998,10 @@ export class Track {
       geo.translate(0, 0.4, 0);
       const mat = new THREE.MeshStandardMaterial({ map: makeBarkTexture('oak'), roughness: 1 });
       const mesh = this._instanced(geo, mat, detail.stump);
-      if (mesh) scene.add(mesh);
+      if (mesh) {
+        scene.add(mesh);
+        this._addDetailColliders('stump', detail.stump, mesh, null);
+      }
     }
     if (detail.mound.length) {
       const geo = new THREE.ConeGeometry(0.9, 2.4, 6, 2);
@@ -4684,6 +5015,27 @@ export class Track {
         mesh.castShadow = quality === 'high';
         scene.add(mesh);
       }
+    }
+  }
+
+  _addDetailColliders(kind, items, mesh, owner) {
+    if (!items || !items.length || !mesh) return;
+    const settings = {
+      rock: { r: 0.82, breakSpeed: 27, colors: { bark: this.env.rock, leaf: this.env.rock } },
+      log: { r: 0.5, breakSpeed: 16, colors: { bark: this.env.trunk, leaf: this.env.tree } },
+      stump: { r: 0.46, breakSpeed: 18, colors: { bark: this.env.trunk, leaf: this.env.tree } },
+    }[kind];
+    if (!settings) return;
+    for (let i = 0; i < items.length; i++) {
+      const t = items[i];
+      this._addCollider({
+        x: t.x, z: t.z, y: t.y,
+        r: Math.max(0.3, settings.r * (t.scale || 1)),
+        type: kind, kind, owner,
+        breakSpeed: settings.breakSpeed,
+        colors: settings.colors,
+        parts: [{ mesh, index: i }],
+      });
     }
   }
 
@@ -4964,6 +5316,8 @@ export class Track {
     });
     for (const g of [postGeo, capGeo]) this._sharedGeos.add(g);
     this._postAssets = { postGeo, postMat, capGeo, capMat, warnMat };
+    this.roadNetwork?.attach(scene);
+    this.roadNetwork?.update(this.samples[Math.min(3, this.n - 1)]?.dist || 0);
     this._buildEndlessChunks(true);
   }
 
@@ -5000,6 +5354,7 @@ export class Track {
 
   _disposeChunk(chunk) {
     if (!this._scene || !chunk) return;
+    this._removeCollidersForOwner(chunk.group);
     this._scene.remove(chunk.group);
     chunk.group.traverse((obj) => {
       if (obj.isMesh && obj.geometry && !this._sharedGeos.has(obj.geometry)) {
@@ -5014,7 +5369,22 @@ export class Track {
     const latStep = q === 'high' ? 3.4 : q === 'medium' ? 4.6 : 6.4;
     const span = q === 'high' ? 56 : q === 'medium' ? 50 : 42;
     const halfCols = Math.ceil(span / latStep);
-    const cols = halfCols * 2 + 1;
+    // A dense strip beside the road, then progressively coarser rings out to
+    // the world edge. This gives the player real terrain to explore off-road
+    // without paying for high-density geometry a quarter of a kilometre away.
+    const lats = [];
+    for (let i = -halfCols; i <= halfCols; i++) lats.push(i * latStep);
+    const outerSpan = q === 'high' ? 215 : q === 'medium' ? 170 : 125;
+    let outward = halfCols * latStep;
+    let grow = latStep * 1.9;
+    while (outward < outerSpan) {
+      outward = Math.min(outerSpan, outward + grow);
+      grow *= 1.45;
+      lats.unshift(-outward);
+      lats.push(outward);
+    }
+    const cols = lats.length;
+    this.worldBound = outerSpan - 18;
     const rows = Math.floor((i1 - i0) / stride) + 1;
     const count = rows * cols;
     const positions = new Float32Array(count * 3);
@@ -5034,7 +5404,7 @@ export class Track {
       const s = this.samples[idx];
       for (let c = 0; c < cols; c++) {
         const ci = r * cols + c;
-        const lat = (c - halfCols) * latStep;
+        const lat = lats[c];
         const x = s.pos.x + s.right.x * lat;
         const z = s.pos.z + s.right.z * lat;
         let y = this.heightAtSample(idx, lat);
@@ -5265,7 +5635,7 @@ export class Track {
     const rng = mulberry32(this.seed + i0 * 7919 + 23);
     const collected = this._collectScenery(i0, i1, q, this.seed + i0 * 7919 + 23);
     for (const [type, items] of Object.entries(collected.trees)) {
-      this._addTreeSet(group, items, type, rng, q);
+      this._addTreeSet(group, items, type, rng, q, group);
     }
     for (const kind of Object.keys(this._underAssets)) {
       this._addUnderSet(group, collected.under[kind], this._underAssets[kind], rng);
@@ -5286,6 +5656,7 @@ export class Track {
       if (mesh) {
         mesh.castShadow = q === 'high';
         group.add(mesh);
+        this._addDetailColliders(kind, items, mesh, group);
       }
     }
   }

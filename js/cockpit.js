@@ -456,6 +456,21 @@ export class Cockpit {
     ctx.lineWidth = 1.4;
     ctx.stroke();
 
+    // side-road forks on the local map
+    if (track.roadNetwork) {
+      ctx.strokeStyle = 'rgba(128,141,118,.72)';
+      ctx.lineWidth = 3.4;
+      for (const road of track.roadNetwork.roads) {
+        if (road.dist1 < track.samples[i0].dist - 40 || road.dist0 > track.samples[i1].dist + 40) continue;
+        ctx.beginPath();
+        road.samples.forEach((smp, k) => {
+          const [mx, my] = proj(smp.pos.x, smp.pos.z);
+          if (k === 0) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
+        });
+        ctx.stroke();
+      }
+    }
+
     // the part already driven
     ctx.strokeStyle = 'rgba(242,196,58,.85)';
     ctx.lineWidth = 3.2;

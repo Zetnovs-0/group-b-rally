@@ -16,7 +16,9 @@ const TIPS = [
   'Tip: Snow tyres bite, but ice does not. Watch the grip meter on the trip computer.',
   'Tip: Group B cars make boost with lag. Stay on the throttle early to keep the turbo lit.',
   'Tip: Handbrake rotates the car on tight hairpins — but scrubs speed fast.',
-  'Tip: You can drive onto the verge, but the tree line is hard and unforgiving.',
+  'Tip: You can leave the tarmac and cut through the trees — small ones break, big ones bite back.',
+  'Tip: ENDLESS roads fork. Side roads wander away and often rejoin the main route.',
+  'Tip: Not every impact is survivable. Above roughly 70 km/h a tree trunk will shatter.',
   'Tip: The map and timer are mounted in the car. Look down, not at a floating HUD.',
   'Tip: ENDLESS mode keeps generating road ahead. Your furthest distance is your record.',
   'Tip: Heavier cars carry momentum. Brake earlier, and let the weight work for you.',
@@ -169,6 +171,108 @@ export class UI {
   }
 
   _biomeArt(biome, stageId) {
+    if (biome === 'coast') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3f81ad"/><stop offset=".6" stop-color="#cfe4e4"/><stop offset="1" stop-color="#ead2a4"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="318" cy="24" r="14" fill="#fff2c8" opacity=".75"/>
+        <path d="M0 57 L120 54 L260 58 L400 50 L400 90 L0 90Z" fill="#4c8494" opacity=".85"/>
+        <path d="M0 61 L80 59 L170 63 L280 60 L400 64" stroke="#d8ecec" stroke-width="1" opacity=".45" fill="none"/>
+        <path d="M0 67 L48 60 L96 66 L150 58 L214 68 L276 61 L342 67 L400 60 L400 90 L0 90Z" fill="#596b42" opacity=".9"/>
+        <g fill="#23381f">
+          <path d="M52 88 L62 50 L72 88Z"/><path d="M70 88 L82 42 L94 88Z"/>
+          <path d="M148 88 L158 46 L168 88Z"/><path d="M166 88 L178 38 L190 88Z"/>
+          <path d="M318 88 L329 44 L340 88Z"/><path d="M338 88 L350 36 L362 88Z"/>
+        </g>
+        <path d="M228 90 L260 66 L302 66 L340 90Z" fill="#5b5144"/>
+        <path d="M240 90 L268 68 L278 68 L252 90Z" fill="#3c352b" opacity=".75"/>
+        <path d="M322 90 L296 68 L304 68 L332 90Z" fill="#3c352b" opacity=".75"/>
+        <path d="M278 69 L287 69 L300 90 L288 90Z" fill="#ede3c6" opacity=".55"/>
+        <rect y="84" width="400" height="6" fill="#2c3922"/>
+      </svg>`;
+    }
+    if (biome === 'alpine') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3a6b9b"/><stop offset=".6" stop-color="#b8d2e4"/><stop offset="1" stop-color="#e7eef3"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="78" cy="20" r="12" fill="#fff8e4" opacity=".55"/>
+        <path d="M0 60 L52 31 L96 56 L150 20 L210 58 L266 30 L326 56 L374 34 L400 52 L400 90 L0 90Z" fill="#8da6b8" opacity=".8"/>
+        <g fill="#edf5fa">
+          <path d="M150 20 L139 38 L164 38Z"/><path d="M266 30 L254 48 L280 48Z"/><path d="M374 34 L363 50 L387 50Z"/>
+        </g>
+        <path d="M0 70 L70 57 L140 69 L210 54 L282 68 L350 58 L400 66 L400 90 L0 90Z" fill="#607b58"/>
+        <g fill="#1e3a2a">
+          <path d="M22 88 L32 56 L42 88Z"/><path d="M38 88 L50 48 L62 88Z"/>
+          <path d="M104 88 L114 54 L124 88Z"/><path d="M118 88 L130 46 L142 88Z"/>
+          <path d="M300 88 L310 52 L320 88Z"/><path d="M316 88 L328 44 L340 88Z"/>
+        </g>
+        <path d="M146 90 L188 63 L214 63 L254 90Z" fill="#66706b"/>
+        <path d="M156 90 L192 65 L200 65 L174 90Z" fill="#4e5652" opacity=".8"/>
+        <path d="M242 90 L214 65 L222 65 L250 90Z" fill="#4e5652" opacity=".8"/>
+        <path d="M196 66 Q192 78 186 90 M206 66 Q210 78 216 90" stroke="#d7ded9" stroke-width="1" fill="none" opacity=".42"/>
+        <rect y="84" width="400" height="6" fill="#33452f"/>
+      </svg>`;
+    }
+    if (biome === 'eifel') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#607d8b"/><stop offset=".65" stop-color="#aebdb5"/><stop offset="1" stop-color="#6a7f63"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <g opacity=".32" fill="#e3e9e3"><ellipse cx="100" cy="18" rx="58" ry="9"/><ellipse cx="146" cy="15" rx="34" ry="6"/><ellipse cx="318" cy="22" rx="70" ry="10"/></g>
+        <path d="M0 58 L58 44 L124 56 L186 40 L250 57 L318 45 L374 55 L400 50 L400 90 L0 90Z" fill="#40573e" opacity=".75"/>
+        <path d="M0 69 L72 58 L138 68 L206 56 L276 68 L344 58 L400 66 L400 90 L0 90Z" fill="#293a27" opacity=".9"/>
+        <g fill="#142617">
+          <path d="M18 88 L30 44 L42 88Z"/><path d="M36 88 L50 36 L64 88Z"/><path d="M60 88 L71 50 L82 88Z"/>
+          <path d="M108 88 L120 40 L132 88Z"/><path d="M128 88 L141 32 L154 88Z"/>
+          <path d="M256 88 L268 42 L280 88Z"/><path d="M278 88 L291 34 L304 88Z"/>
+          <path d="M330 88 L342 46 L354 88Z"/><path d="M350 88 L362 38 L374 88Z"/>
+        </g>
+        <path d="M150 90 L182 63 L218 63 L250 90Z" fill="#4b4a42"/>
+        <path d="M160 90 L188 65 L196 65 L174 90Z" fill="#353733" opacity=".82"/>
+        <path d="M240 90 L212 65 L220 65 L248 90Z" fill="#353733" opacity=".82"/>
+        <path d="M200 65 L205 65 L204 83 L199 83Z" fill="#ddd8bd" opacity=".45"/>
+        <path d="M191 70 Q197 78 193 90 M211 70 Q205 79 209 90" stroke="#9a9b8a" stroke-width=".8" fill="none" opacity=".38"/>
+        <rect y="84" width="400" height="6" fill="#1d2b18"/>
+      </svg>`;
+    }
+    if (biome === 'tuscany') {
+      return `
+      <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs><linearGradient id="sky-${stageId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6f9fc1"/><stop offset=".58" stop-color="#f0dcb8"/><stop offset="1" stop-color="#bfa06d"/>
+        </linearGradient></defs>
+        <rect width="400" height="90" fill="url(#sky-${stageId})"/>
+        <circle cx="312" cy="24" r="15" fill="#fff0bc" opacity=".8"/>
+        <path d="M0 62 L64 45 L128 60 L198 42 L272 59 L338 47 L400 58 L400 90 L0 90Z" fill="#a58c56"/>
+        <path d="M0 73 L76 60 L148 71 L220 58 L296 70 L362 61 L400 68 L400 90 L0 90Z" fill="#7e6d43"/>
+        <g fill="#35442a">
+          <path d="M26 88 L30 53 L34 88Z"/><ellipse cx="30" cy="54" rx="9" ry="17"/>
+          <path d="M64 88 L68 48 L72 88Z"/><ellipse cx="68" cy="49" rx="10" ry="20"/>
+          <path d="M226 88 L230 51 L234 88Z"/><ellipse cx="230" cy="52" rx="9" ry="18"/>
+          <path d="M264 88 L268 45 L272 88Z"/><ellipse cx="268" cy="46" rx="10" ry="21"/>
+          <path d="M300 88 L304 53 L308 88Z"/><ellipse cx="304" cy="54" rx="8" ry="16"/>
+        </g>
+        <g fill="#8a7442" opacity=".5">
+          <path d="M0 80 Q90 68 190 78 Q290 88 400 76 L400 90 L0 90Z"/>
+        </g>
+        <path d="M146 90 L184 62 L216 62 L254 90Z" fill="#6d6050"/>
+        <path d="M158 90 L188 64 L196 64 L172 90Z" fill="#4f4639" opacity=".8"/>
+        <path d="M242 90 L212 64 L220 64 L250 90Z" fill="#4f4639" opacity=".8"/>
+        <path d="M194 64 Q200 76 196 90 M208 64 Q204 76 210 90" stroke="#d8c48d" stroke-width=".8" fill="none" opacity=".38"/>
+        <rect y="84" width="400" height="6" fill="#5a4b2f"/>
+      </svg>`;
+    }
+    // New asphalt regions borrow the closest authored silhouette until they
+    // get their own bespoke postcard art.
+    biome = ({ coast: 'japan', alpine: 'snow', eifel: 'forest', tuscany: 'russia' })[biome] || biome;
     if (biome === 'forest') {
       return `
       <svg class="biome-art" viewBox="0 0 400 90" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -400,7 +504,7 @@ export class UI {
         <span class="car-thumb">${this._carSVG(car)}</span>
         <span class="car-meta">
           <span class="car-name">${car.short}</span>
-          <span class="car-sub"><span class="layout">${car.layout}</span><i></i>${car.year}<i></i>${car.country}</span>
+          <span class="car-sub"><span class="layout">${car.layout}</span><i></i>${car.year}<i></i>${car.series || car.country}</span>
         </span>
         <span class="car-badge">#${String(car.number).padStart(2, '0')}</span>
       </button>`).join('');

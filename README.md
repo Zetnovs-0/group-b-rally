@@ -1,6 +1,6 @@
 # GROUP B — RALLY LEGENDS
 
-A 3D first-person Group B rally game built with Three.js and vanilla JavaScript. Six stages across six biomes plus an infinite, chunk-streamed ENDLESS mode, six period rally cars, a physical cockpit with a working trip-computer map, co-driver pacenotes, and a proper surface-aware driving model with direct, planted steering.
+A 3D first-person driving game built with Three.js and vanilla JavaScript. It began as a Group B rally tribute and has grown into a broader autosim: ten authored stages across ten environments, fourteen cars from period rally monsters to modern Rally1 and road sports cars, an infinite branching road network, open off-road terrain, solid scenery and destructible trees, a physical cockpit with a working trip-computer map, co-driver pacenotes, and a surface-aware driving model.
 
 ![Main menu](docs/menu.png)
 
@@ -18,24 +18,32 @@ Then open <http://localhost:8080/>. The game is desktop-first and supports keybo
 
 ## The game
 
-### Stages in six biomes
+### Ten stages across ten environments
 - **KIELDER** — a fast, blind-crested forest stage in Northumberland. Loose gravel and mud.
 - **KURU-KURU** — a tight Central American jungle tunnel of wet mud, standing water and roots, with rain.
 - **ROVANIEMI** — Lapland's snowbanks and sweepers, with glare ice and snowfall.
-- **HONSHU TOUGE** — a narrow cedar-lined Japanese mountain pass. Wet asphalt, switchbacks, guardrails, retaining walls and mist.
+- **HONSHU TOUGE** — a narrow cedar-lined Japanese mountain pass. Wet asphalt, switchbacks, guardrails and mist.
 - **URAL TAIGA** — wide, fast Russian trail through birch alleys. Cracked asphalt, long straights and blind crests.
 - **GREAT RIFT** — a red-dirt Kenyan safari trail with acacia trees, big crests and open dust.
+- **RIVIERA CORNICHE** — warm Mediterranean coastal tarmac. Tight walls, sea air and a long drop.
+- **COL DE L'ISERAN** — high alpine asphalt. Cold switchbacks, stone parapets and stacked hairpins.
+- **EIFEL RING** — damp German forest tarmac. Long fourth-gear crests and blind, off-camber entries.
+- **TOSCANA STRADA** — sunlit hill tarmac through cypress and stone farms. Fast flowing sweeps at dusk.
 
 Every authored stage route is generated from a Catmull-Rom spline with its own geometry, terrain, tree/rock scatter, hazards, pacenotes and weather. ENDLESS routes use a dedicated forward-progressing procedural generator. No external models or textures are used.
 
 ### Biome generation
-The six regions no longer share one generic forest. Each biome owns its terrain profile, road surface, tree and understory mix, roadside furniture, palette and atmosphere:
+The regions no longer share one generic forest. Each biome owns its terrain profile, road surface, tree and understory mix, roadside furniture, palette and atmosphere:
 - **KIELDER** — rolling Northumberland banks, dense pine/oak canopy, ferns, stone walls and telegraph wires over loose gravel.
 - **KURU-KURU** — steep jungle ridges, palms, banana leaves, hanging vines, reeds and standing water over wet mud.
 - **ROVANIEMI** — open Lapland fells, wind-packed snow, drifts, exposed rock and sparse snow-laden spruce.
 - **HONSHU TOUGE** — a genuine mountain shelf: a cliff/retaining wall on the uphill side, guardrail and valley drop on the other, cedar trunks and asphalt lane markings.
 - **URAL TAIGA** — flat, wide taiga with white birch alleys, utility poles, dry grass and cracked asphalt.
 - **GREAT RIFT** — open red-earth savannah with acacias, baobabs, dry grass, termite mounds and dust.
+- **RIVIERA** — dry Mediterranean scrub, umbrella pines, warm limestone and exposed coastal tarmac.
+- **ALPINE** — alpine meadow, exposed limestone, snow-capped skyline and cold mountain asphalt.
+- **EIFEL** — lush oak/birch woodland, damp shade and dark forest tarmac.
+- **TUSCANY** — dry golden grass, cypress, olive tones and sun-bleached hill tarmac.
 
 ![Honshu touge](docs/touge.png)
 
@@ -44,12 +52,14 @@ The six regions no longer share one generic forest. Each biome owns its terrain 
 Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road keeps generating ahead of you forever.
 
 - A procedural route generator builds corners, hairpins, straights, elevation changes and crests from the selected region's own character (tight touge, fast taiga, open safari, icy Lapland, etc.).
-- Road, terrain, shoulder, snow bank, scenery, posts and hazard surfaces are streamed in ~200 m chunks and the chunks behind you are disposed, so geometry and draw calls stay flat.
+- The main route grows a **branching side-road network**. Junctions fork left or right every few hundred metres; some branches wander away and dead-end, others curve back and rejoin the main road further ahead. Every branch is fully drivable with its own surface query, shoulders, marker posts and grip.
+- Road, terrain, shoulder, snow bank, scenery, posts and hazard surfaces are streamed in ~200 m chunks and the chunks behind you are disposed, so geometry and draw calls stay flat. Side-road topology and meshes are likewise built, disposed and pruned as you move.
+- Terrain is generated in dense rings beside the road and progressively coarser rings out to ~200 m either side. There is no barrier beside the road any more: you can cross the verge, drive through the trees, explore the hillside and rejoin wherever you like.
 - Hazards, pacenotes and the co-driver keep being generated with the road. The trip-computer map switches to a live local section instead of trying to draw a shrinking whole route.
 - The timer keeps running, there is no finish gantry, and your furthest distance is stored per stage and car. Quit from the pause menu when you have had enough.
-- Streaming works on all six biomes, not just the new regions.
+- Streaming works on all ten environments.
 
-### Six Group B cars
+### Cars across eras
 | Car | Layout | Power | Weight | Character |
 |---|---|---|---|---|
 | Audi Quattro S1 E2 | AWD | 476 hp | 1090 kg | Heavy, planted, five-cylinder turbo |
@@ -58,12 +68,20 @@ Pick any stage, flip the menu switch from **STAGE** to **ENDLESS**, and the road
 | Ford RS200 | AWD | 450 hp | 1050 kg | Balanced mid-engine machine |
 | Lancia 037 Rally | RWD | 325 hp | 960 kg | Supercharged, no safety net |
 | Renault 5 Turbo 2 | RWD | 350 hp | 970 kg | Short-wheelbase pocket rocket |
+| Toyota GR Yaris Rally1 | AWD | 380 hp | 1230 kg | Modern hybrid rally hardware, huge grip |
+| Skoda Fabia RS Rally2 | AWD | 289 hp | 1230 kg | Friendly customer rally benchmark |
+| BMW M3 E30 | RWD | 235 hp | 1200 kg | Linear, balanced touring-car icon |
+| Porsche 911 Carrera RS 2.7 | RWD | 210 hp | 975 kg | Light, rear-engined, alive |
+| Alpine A110 S | RWD | 292 hp | 1114 kg | Featherweight modern sports car |
+| Mitsubishi Lancer Evo VI | AWD | 280 hp | 1365 kg | Heavy, planted Group A weapon |
+| Ford Escort RS1800 Mk2 | RWD | 250 hp | 1000 kg | Loud, light and precise |
+| VW Golf GTI 16V Mk2 | FWD | 160 hp | 960 kg | Eager front-drive hot hatch |
 
 ### Cockpit and dash
 - Four camera views — **cockpit**, bonnet, chase and bumper — cycled with **C**, the pad's **LB** or the on-screen **CAM** button.
 - First-person driver's-eye view with a 3D co-driver sitting to your right.
 - Holding the **right mouse button** (or right stick) lets you look around at him, the side windows and the cabin.
-- A real center-dash **trip-computer screen** displays the stage map, car marker, timer, best time, gear/speed, surface, grip level, road status and radio state.
+- A real center-dash **trip-computer screen** displays the stage map, car marker, timer, best time, gear/speed, surface, grip level, road status and radio state. In ENDLESS mode the local map also draws the side-road forks.
 - A second physical **co-driver screen** shows large directional arrows, severity numbers, distance, "tightens/opens" modifiers, the next note, current surface/grip and upcoming hazards.
 - Steering wheel, hands, gear lever and handbrake animate. The interior has a roll cage, harnesses, screens, wipers, mirrors and co-driver with helmet/headset.
 - No floating map or timer HUD. The only overlay in normal driving is a small controls hint that fades away.
@@ -87,8 +105,9 @@ Every stage can be run in any combination of conditions. Both are selectable fro
 - Surface grip changes by biome and by hazard patches: loose gravel, mud, water, roots, black ice, deep snow, wet tarmac, moss, sand and fesh-fesh. Rolling resistance and engine braking change with the surface too.
 - Handbrake locks the rear axle, cuts rear lateral grip and rotates the car while scrubbing speed.
 - Turbo boost builds with lag; engine/induction/turbo audio follows the revs.
-- The stage surface, ruts, snow banks, roadside markers and tree line affect the visual and physical route.
-- Start/finish gantry posts are solid; the tree line is a hard corridor boundary.
+- The stage surface, ruts, snow banks, roadside markers, trees and boulders all affect the visual and physical route.
+- Start/finish gantry posts are solid. Trees, rocks, logs and stumps are solid too; the corridor barrier beside the road has been removed so you can drive onto the verge and into the scenery.
+- High-speed impacts break smaller objects. Trees, rocks, logs and stumps have their own break thresholds; a birch snaps at a much lower speed than an oak or a boulder. Debris is thrown, tumbles and fades, and the car keeps some momentum. Below the threshold, the object is immovable and stops or deflects the car.
 
 ### Pacenotes and co-driver
 - Notes are generated from curvature, corner duration, tightening/opening rate, crests, jumps, straights and hazard patches.
@@ -105,10 +124,13 @@ A custom post-processing stack is available in Settings under **Vivid shaders**:
 The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass bloom, separable blur and a final grading pass. It does not require an external post-processing package.
 
 ### Visual detail
+- Trees are fully procedural with tapered multi-segment trunks, buttressed roots, visible limbs and forks, more organic multi-layer solid canopies, horizontal canopy sheets and denser billboard detail. Palms have scarified rings, root flares and a full frond skirt.
 - Sky dome with colour-managed gradient, sun/moon discs, horizon glow, drifting procedural cloud cover and a star field at night.
 - Biome-specific distant ridges (jagged snow peaks, jungle ridges, flat taiga, rift escarpment), telegraph poles and sagging wires, tyre stacks and hay bales on the outside of corners, sponsor boards, hazard warning signs and parked spectator cars.
-- Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes and red safari dirt.
+- Roads are individually textured: loose gravel ruts, mud and standing water, packed snow with ice, damp asphalt with painted lines, cracked Russian asphalt with potholes, red safari dirt and the new coastal/alpine/eifel/Tuscan tarmac variants.
+- Branching side roads use the same road materials and get their own shoulders and marker posts.
 - Skid marks are laid down under lock-up or handbrake slides; puddles and wet sheen appear when it rains.
+- Debris bursts throw bark, leaf and rock chunks with gravity, ground bounce and fade.
 - Windscreen rain droplets run and streak across the glass in the cockpit view.
 - Snow/rain particles are kept out of the cabin, and spray colour follows the surface (dust, mud, snow).
 
@@ -150,8 +172,10 @@ index.html            menu, overlays, import map
 css/style.css         rally-poster UI, modals, responsive layout
 js/main.js            renderer and loop
 js/game.js            stage lifecycle, countdown, race loop, results
-js/track.js           spline tracks, terrain, road/verges, biome scenery, pacenotes, endless chunk streaming
-js/endlessRoute.js    procedural one-sample-at-a-time route generator
+js/track.js           spline tracks, terrain, road/verges, biome scenery, pacenotes, collisions, endless chunk streaming
+js/endlessRoute.js    procedural one-sample-at-a-time main route generator
+js/roadNetwork.js     branching side-road generation, meshes and surface queries
+js/destruction.js     debris bursts and breakable-object fragments
 js/carModel.js        procedural cars, liveries, cockpit, co-driver, dash screens
 js/physics.js         driving model and surface/collision handling
 js/cockpit.js         CanvasTexture dash/map/pacenote renderers and animations

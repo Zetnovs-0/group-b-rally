@@ -287,6 +287,38 @@ export class AudioEngine {
     osc.stop(t + 0.28);
   }
 
+  shatter(strength = 1) {
+    if (!this.ready) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      src.playbackRate.value = 0.8 + Math.random() * 0.9;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 900 + Math.random() * 1400;
+      const gain = ctx.createGain();
+      const at = t + i * 0.035;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(0.1 * strength, at + 0.004);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + 0.18 + i * 0.06);
+      src.connect(filter).connect(gain).connect(this.nodes.master);
+      src.start(at, Math.random());
+      src.stop(at + 0.28);
+    }
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(150, t);
+    osc.frequency.exponentialRampToValueAtTime(54, t + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.12 * strength, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    osc.connect(g).connect(this.nodes.master);
+    osc.start(t);
+    osc.stop(t + 0.25);
+  }
+
   thunder(strength = 1) {
     if (!this.ready) return;
     const ctx = this.ctx;

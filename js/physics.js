@@ -24,6 +24,7 @@ export class CarPhysics {
     this.car = car;
     this.track = track;
     this.onImpact = opts.onImpact || null;
+    this.onBreak = opts.onBreak || null;
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
     this.yaw = 0;
@@ -235,7 +236,7 @@ export class CarPhysics {
 
   step(dt, input, track) {
     if (!this.info) this.info = track.nearestGlobal(this.pos);
-    let info = track.nearest(this.pos, track.lastIndexHint);
+    let info = track.driveAt(this.pos, track.lastIndexHint);
     this.info = info;
     this.impactCooldown = Math.max(0, this.impactCooldown - dt);
     this.shiftTimer = Math.max(0, this.shiftTimer - dt);
@@ -457,35 +458,34 @@ export class CarPhysics {
       }
     }
 
-    // ---- keep inside stage corridor ----
-    const bound = track.halfWidth + 7.4;
-    if (Math.abs(info.lateral) > bound) {
-      const idx = track.nearest(this.pos, track.lastIndexHint);
-      const side = Math.sign(idx.lateral) || 1;
-      const center = idx.center;
-      const r = idx.right;
-      this.pos.x = center.x + r.x * side * bound;
-      this.pos.z = center.z + r.z * side * bound;
-      const impact = Math.abs(this.forwardSpeed);
-      const outward = this.vel.x * r.x + this.vel.z * r.z;
+    // ---- soft world edge (far outside the drivable corridor) ----
+    // There is deliberately no barrier beside the road any more. You can
+    // leave the tarmac, cross the verge, drive through the trees and rejoin
+    // anywhere. Only the edge of the streamed terrain is a limit.
+    const bound = track.worldBound || 240;
+    const mainLat = info.mainLateral != null ? info.mainLateral : info.lateral;
+    if (Math.abs(mainLat) > bound) {
+      const side = Math.sign(mainLat) || 1;
+      const center = info.mainCenter || info.center;
+      const right = info.mainRight || info.right;
+      this.pos.x = center.x + right.x * side * bound;
+      this.pos.z = center.z + right.z * side * bound;
+      const outward = this.vel.x * right.x + this.vel.z * right.z;
       if (outward * side > 0) {
-        this.vel.x -= r.x * outward * 1.5;
-        this.vel.z -= r.z * outward * 1.5;
+        this.vel.x -= right.x * outward * 1.35;
+        this.vel.z -= right.z * outward * 1.35;
       }
-      this.vel.x *= 0.55;
-      this.vel.z *= 0.55;
-      this.forwardSpeed = this.vel.x * nfwdX + this.vel.z * nfwdZ;
-      this.vLat = this.vel.x * nleftX + this.vel.z * nleftZ;
-      this.lateralSpeed = -this.vLat;
-      this.yawRate *= 0.35;
-      if (this.impactCooldown <= 0 && impact > 4) {
-        this.impactCooldown = 0.6;
-        if (this.onImpact) this.onImpact(Math.min(1, impact / 30), 'tree');
-      }
+      this.vel.x *= 0.78;
+      this.vel.z *= 0.78;
+      this.yawRate *= 0.6;
+      this._rebuildBodySpeeds();
     }
 
+    // ---- solid / breakable scenery ----
+    this._resolvePropCollisions(track);
+
     // ---- ground follow ----
-    info = track.nearest(this.pos, track.lastIndexHint);
+    info = track.driveAt(this.pos, track.lastIndexHint);
     this.info = info;
     const targetY = info.height;
     this.pos.y = damp(this.pos.y, targetY, 20, dt);
@@ -532,5 +532,78 @@ export class CarPhysics {
   resetToTrack(track) {
     this.reset(track, false);
     this.track.lastIndexHint = -1;
+  }
+
+  _rebuildBodySpeeds() {
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    const lx = Math.cos(this.yaw);
+    const lz = -Math.sin(this.yaw);
+    this.forwardSpeed = this.vel.x * fx + this.vel.z * fz;
+    this.vLat = this.vel.x * lx + this.vel.z * lz;
+    this.lateralSpeed = -this.vLat;
+  }
+
+  /** Circle-vs-prop resolution. Trees, rocks, logs and stumps can be knocked
+   *  down above their break speed; below that they are solid and stop the car. */
+  _resolvePropCollisions(track) {
+    const carR = ((this.car.style?.width || 1.7) * 0.5) + 0.16;
+    const near = track.collidersNear(this.pos.x, this.pos.z, carR + 3.4);
+    if (!near.length) return;
+    let broke = 0;
+    for (const c of near) {
+      if (c.broken || c.removed) continue;
+      const dx = this.pos.x - c.x;
+      const dz = this.pos.z - c.z;
+      const rr = c.r + carR;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > rr * rr) continue;
+      let d = Math.sqrt(d2);
+      let nx, nz;
+      if (d < 1e-4) {
+        nx = Math.sin(this.yaw + Math.PI);
+        nz = Math.cos(this.yaw + Math.PI);
+        d = 1e-4;
+      } else {
+        nx = dx / d;
+        nz = dz / d;
+      }
+      const speed = Math.hypot(this.vel.x, this.vel.z);
+      const vn = this.vel.x * nx + this.vel.z * nz;
+      const approach = Math.max(0, -vn);
+      const impactSpeed = Math.max(approach, speed * 0.3);
+      if (c.breakSpeed && speed > 1.5 && impactSpeed >= c.breakSpeed && track.breakCollider(c)) {
+        // Breaking sheds speed but does not stop the car dead. A heavy tree
+        // still takes a big bite out of your momentum.
+        const loss = clamp(0.86 - impactSpeed * 0.003, 0.58, 0.86);
+        this.vel.x *= loss;
+        this.vel.z *= loss;
+        this.yawRate += (Math.random() - 0.5) * 0.65 +
+          (nx * Math.cos(this.yaw) - nz * Math.sin(this.yaw)) * 0.18;
+        broke++;
+        if (this.onBreak) this.onBreak(c, impactSpeed);
+        continue;
+      }
+      // Solid: push out and bounce. A glancing hit scrubs speed, a square one
+      // stops the car and throws it sideways.
+      this.pos.x = c.x + nx * rr;
+      this.pos.z = c.z + nz * rr;
+      if (vn < 0) {
+        this.vel.x -= nx * vn * 1.42;
+        this.vel.z -= nz * vn * 1.42;
+      }
+      this.vel.x *= 0.48;
+      this.vel.z *= 0.48;
+      this.yawRate *= 0.42;
+      this._rebuildBodySpeeds();
+      if (this.impactCooldown <= 0 && impactSpeed > 1.6) {
+        this.impactCooldown = 0.5;
+        if (this.onImpact) this.onImpact(Math.min(1, impactSpeed / 21), c.type || 'tree');
+      }
+    }
+    if (broke) {
+      this._rebuildBodySpeeds();
+      this.impactCooldown = Math.max(this.impactCooldown, 0.22);
+    }
   }
 }

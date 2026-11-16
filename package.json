@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A Group B rally game with streaming endless stages, six biomes, first-person cockpits and pacenotes.",
+  "description": "An open-world autosim with authored asphalt and rally stages, branching endless roads, off-road driving, destructible scenery, fourteen cars and first-person cockpits.",
   "scripts": {
     "start": "python3 -m http.server 8080",
     "serve": "python3 -m http.server 8080"
