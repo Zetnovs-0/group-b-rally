@@ -29,8 +29,11 @@ export class Input {
 
     window.addEventListener('keydown', (e) => this._key(e, true));
     window.addEventListener('keyup', (e) => this._key(e, false));
-    window.addEventListener('blur', () => this.keys.clear());
-    document.addEventListener('visibilitychange', () => { if (document.hidden) this.keys.clear(); });
+    // Losing focus must release every virtual control, not only keyboard keys.
+    // Otherwise a held throttle or touch pointer survives an alt-tab and the car
+    // keeps driving while the page is in the background.
+    window.addEventListener('blur', () => this.reset());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.reset(); });
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
@@ -85,6 +88,8 @@ export class Input {
     window.addEventListener('gamepaddisconnected', () => {
       this.gamepadIndex = null;
       this.hasGamepad = false;
+      this.prevButtons = [];
+      this.gamepadLookActive = false;
     });
   }
 
@@ -213,6 +218,7 @@ export class Input {
     this.gamepadLookActive = false;
     this.keyboardLookActive = false;
     this.touchLookId = null;
+    this.prevButtons = [];
     this.touch.left = 0;
     this.touch.right = 0;
     this.touch.throttle = 0;

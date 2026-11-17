@@ -111,11 +111,20 @@ export class UI {
   get selectedEndless() { return this.selectedMode === 'endless'; }
 
   _loadSelection() {
+    const fallback = { car: 'quattro', stage: 'kielder', mode: 'stage' };
     try {
       const raw = localStorage.getItem('gbr.selection.v1');
-      if (raw) return JSON.parse(raw);
-    } catch { /* ignore */ }
-    return { car: 'quattro', stage: 'kielder', mode: 'stage' };
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+      return {
+        car: typeof parsed.car === 'string' ? parsed.car : fallback.car,
+        stage: typeof parsed.stage === 'string' ? parsed.stage : fallback.stage,
+        mode: parsed.mode === 'endless' ? 'endless' : 'stage',
+      };
+    } catch {
+      return fallback;
+    }
   }
 
   _saveSelection() {

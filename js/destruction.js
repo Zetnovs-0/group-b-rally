@@ -191,5 +191,7 @@ export class DestructionSystem {
     for (const b of this.bursts) this._retire(b);
     this.bursts.length = 0;
     if (this.group.parent) this.group.parent.remove(this.group);
+    this.dustTex?.dispose();
+    this.dustTex = null;
   }
 }

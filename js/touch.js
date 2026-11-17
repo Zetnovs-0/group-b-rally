@@ -21,6 +21,12 @@ export class TouchControls {
     this._syncOrientation();
     window.addEventListener('orientationchange', () => setTimeout(() => this._syncOrientation(), 120));
     window.addEventListener('resize', () => this._syncOrientation());
+    window.addEventListener('blur', () => this._releaseAll());
+  }
+
+  _releaseAll() {
+    this.input.reset();
+    for (const btn of this.pads.keys()) btn.classList.remove('active');
   }
 
   _bind() {
@@ -97,10 +103,7 @@ export class TouchControls {
     }
     this.root.classList.toggle('hidden', !visible);
     this._syncOrientation();
-    if (!visible) {
-      for (const action of ['left', 'right', 'throttle', 'brake', 'handbrake']) this._set(action, 0);
-      for (const btn of this.pads.keys()) btn.classList.remove('active');
-    }
+    if (!visible) this._releaseAll();
   }
 
   setCameraLabel(label) {

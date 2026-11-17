@@ -19,6 +19,18 @@ import { PostFX } from './postfx.js';
 import { DestructionSystem } from './destruction.js';
 
 const PHYS_STEP = 1 / 120;
+// Never let a single slow frame create an unbounded physics backlog. 0.25 s
+// covers ~4 fps rendering; beyond that the clock deliberately runs slow rather
+// than teleporting the car. Dropped time is recorded in debugState().
+const PHYS_CATCHUP_LIMIT = 0.25;
+const MAX_PHYS_STEPS = Math.ceil(PHYS_CATCHUP_LIMIT / PHYS_STEP);
+
+class StageLoadCancelled extends Error {
+  constructor() {
+    super('Stage load superseded');
+    this.name = 'StageLoadCancelled';
+  }
+}
 
 const RANK_NOTES = {
   S: 'Untouchable. The trees will remember that one.',
@@ -92,6 +104,11 @@ export class Game {
     this._scaleUpTimer = 0;
     this.touch = null;
     this.time = 0;
+    this._loadGeneration = 0;
+    this._loadInFlight = false;
+    this._simTimeDropped = 0;
+    this._recoverCooldown = 0;
+    this._debugEnabled = new URLSearchParams(window.location.search).get('debug') === '1';
     this.bestTime = null;
     this.endlessMode = false;
     this.endlessBest = null;
@@ -138,7 +155,7 @@ export class Game {
     this.preview.setCar(this.ui.selectedCar);
     this.preview.setStage(this.ui.selectedStage);
     this.preview.resize(window.innerWidth, window.innerHeight);
-    window.__GAME = this;
+    if (this._debugEnabled) window.__GAME = this;
   }
 
   _bindUI() {
@@ -288,8 +305,10 @@ export class Game {
      STAGE LIFECYCLE
      ============================================================ */
   async startStage(car, stage, endless = false) {
-    if (this.state === 'loading') return;
+    if (this._loadInFlight || this.state === 'loading') return;
     if (!car || !stage) return;
+    const token = ++this._loadGeneration;
+    this._loadInFlight = true;
     this.endlessMode = !!endless;
     if (this.touch?.isTouch) {
       try {
@@ -315,116 +334,179 @@ export class Game {
     this.audio.hushVoice();
     this.state = 'loading';
     this._hintTimer && clearTimeout(this._hintTimer);
+    this._hintTimer = null;
     try {
-      await this._buildStage(car, stage, conditions);
+      const built = await this._buildStage(car, stage, conditions, token);
+      if (!built || token !== this._loadGeneration) return;
       this.ui.setLoading(100, 'READY TO RUN');
       await nextFrame();
+      if (token !== this._loadGeneration) return;
       this.ui.hideLoading();
       this._beginCountdown();
     } catch (err) {
+      if (token !== this._loadGeneration) {
+        console.warn('Discarded superseded stage build', err);
+        return;
+      }
       console.error('Stage build failed', err);
       this.ui.hideLoading();
+      this._disposeStage();
       this.ui.showMenu();
       this.ui.setStartEnabled(true);
       this.state = 'menu';
+      this.preview.setCar(this.ui.selectedCar);
+      this.preview.setStage(this.ui.selectedStage);
       this.ui.toast('STAGE BUILD FAILED — SEE CONSOLE');
+    } finally {
+      if (token === this._loadGeneration) this._loadInFlight = false;
     }
   }
 
-  async _buildStage(car, stage, conditions) {
+  /** Build into local owners and only publish to `this` after the final
+   *  generation check. A cancelled build can therefore never swap the live
+   *  scene, car or countdown out from under a newer stage. */
+  async _buildStage(car, stage, conditions, token) {
     this._disposeStage();
-    this.car = car;
-    this.baseStage = stage;
-    this.conditions = conditions || resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
-    // resolve the chosen time/weather into a run-local stage copy so the
-    // shared config (and the menu art) stay untouched.
-    this.stage = {
-      ...stage,
-      endless: this.endlessMode,
-      ss: this.endlessMode ? '∞' : stage.ss,
-      seed: this.endlessMode ? ((Math.random() * 0x7fffffff) | 0) : stage.seed,
-      env: this.conditions.env,
-      baseGrip: stage.baseGrip * this.conditions.gripMul,
-      conditions: this.conditions,
+    const isCurrent = () => token === this._loadGeneration;
+    const setLoading = (pct, label) => { if (isCurrent()) this.ui.setLoading(pct, label); };
+    const checkpoint = async () => {
+      await nextFrame();
+      if (!isCurrent()) throw new StageLoadCancelled();
     };
-    this.stageMetrics = getStageMetrics(stage);
-    this.ui.setLoading(5, 'PLOTTING THE ROUTE');
-    await nextFrame();
-    this.scene = new THREE.Scene();
-    const quality = this.settings.quality;
-    this.track = new Track(this.stage, quality);
-    this.track.timeOfDay = this.conditions.time;
-    this.ui.setLoading(12, 'RAISING THE SKY');
-    await nextFrame();
-    this.track.buildSky(this.scene);
-    this.renderer.toneMappingExposure = this.stage.env.exposure || 1.04;
-    this.ui.setLoading(20, 'SHAPING TERRAIN');
-    await nextFrame();
-    await this.track.buildTerrain(this.scene, quality);
-    this.ui.setLoading(48, 'CUTTING THE ROAD');
-    await nextFrame();
-    this.track.buildRoad(this.scene);
-    this.ui.setLoading(58, 'SETTING THE GATES');
-    await nextFrame();
-    this.track.buildProps(this.scene, quality);
-    this.ui.setLoading(64, 'PLANTING THE CANOPY');
-    await nextFrame();
-    this.track.buildScenery(this.scene, quality);
-    this.destruction = new DestructionSystem(this.scene, this.track);
-    if (this.track.endless) {
-      this.track.streamEndless(this.track.samples[3].pos);
+    const bag = {
+      scene: null, track: null, destruction: null, carModel: null, carRoot: null,
+      physics: null, cockpit: null, weather: null, headlights: null, camera: null,
+    };
+    try {
+      const resolvedConditions = conditions ||
+        resolveConditions(stage, this.settings.weather, this.settings.timeOfDay);
+      // resolve the chosen time/weather into a run-local stage copy so the
+      // shared config (and the menu art) stay untouched.
+      const runStage = {
+        ...stage,
+        endless: this.endlessMode,
+        ss: this.endlessMode ? '∞' : stage.ss,
+        seed: this.endlessMode ? ((Math.random() * 0x7fffffff) | 0) : stage.seed,
+        env: resolvedConditions.env,
+        baseGrip: stage.baseGrip * resolvedConditions.gripMul,
+        conditions: resolvedConditions,
+      };
+      const quality = this.settings.quality;
+
+      setLoading(5, 'PLOTTING THE ROUTE');
+      await checkpoint();
+      const scene = bag.scene = new THREE.Scene();
+      const track = bag.track = new Track(runStage, quality);
+      track.timeOfDay = resolvedConditions.time;
+
+      setLoading(12, 'RAISING THE SKY');
+      await checkpoint();
+      track.buildSky(scene);
+
+      setLoading(20, 'SHAPING TERRAIN');
+      await checkpoint();
+      await track.buildTerrain(scene, quality);
+      if (!isCurrent()) throw new StageLoadCancelled();
+
+      setLoading(48, 'CUTTING THE ROAD');
+      await checkpoint();
+      track.buildRoad(scene);
+
+      setLoading(58, 'SETTING THE GATES');
+      await checkpoint();
+      track.buildProps(scene, quality);
+
+      setLoading(64, 'PLANTING THE CANOPY');
+      await checkpoint();
+      track.buildScenery(scene, quality);
+      bag.destruction = new DestructionSystem(scene, track);
+      if (track.endless) track.streamEndless(track.samples[3].pos);
+
+      setLoading(88, 'ROLLING OUT THE CAR');
+      await checkpoint();
+      bag.carModel = createCarModel(car, { withInterior: true, menu: false });
+      bag.carRoot = new THREE.Group();
+      bag.carRoot.rotation.order = 'YXZ';
+      bag.carRoot.add(bag.carModel.group);
+      scene.add(bag.carRoot);
+      bag.carModel.group.traverse((o) => {
+        if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+      });
+      // wheels and fender flares sit outside the cockpit shell; hide them from the
+      // interior view so they cannot poke through the open footwell.
+      bag.carModel.exteriorBits.forEach((o) => { o.visible = false; });
+
+      bag.physics = new CarPhysics(car, track, {
+        onImpact: (strength) => {
+          this.shakeImpulse = Math.min(1.3, this.shakeImpulse + strength * 1.1);
+          this.audio.impact(strength);
+        },
+        onBreak: (collider, impact) => {
+          this.destruction?.breakObject(collider, impact, this.physics?.vel);
+          this.audio.impact(Math.min(1, 0.35 + impact / 24));
+          this.audio.shatter(Math.min(1.2, 0.45 + impact / 20));
+          this.shakeImpulse = Math.min(1.5, this.shakeImpulse + 0.22 + impact * 0.018);
+        },
+      });
+      bag.cockpit = new Cockpit({ track, stage, car, settings: this.settings });
+      bag.cockpit.attach(bag.carModel);
+
+      bag.weather = new WeatherFX(runStage, quality, this.settings.weatherFx);
+      bag.weather.onLightning = () => this._lightning();
+      scene.add(bag.weather.group);
+
+      bag.headlights = new Headlights(bag.carRoot, car, runStage.env);
+
+      bag.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.025, 2800);
+      bag.camera.rotation.order = 'YXZ';
+      bag.camera.rotation.set(0, Math.PI, 0);
+
+      setLoading(95, 'HEATING THE TYRES');
+      await checkpoint();
+
+      // Publish only after the last await so a superseded build owns nothing
+      // that the live game can see.
+      this.car = car;
+      this.baseStage = stage;
+      this.conditions = resolvedConditions;
+      this.stage = runStage;
+      this.stageMetrics = getStageMetrics(stage);
+      this.scene = bag.scene;
+      this.track = bag.track;
+      this.destruction = bag.destruction;
+      this.carModel = bag.carModel;
+      this.carRoot = bag.carRoot;
+      this.physics = bag.physics;
+      this.cockpit = bag.cockpit;
+      this.weather = bag.weather;
+      this.headlights = bag.headlights;
+      this.camera = bag.camera;
+      this.cameraLook.set(0, 0, 0);
+      this.headBase.copy(this.carModel.headRig.position);
+      this.renderer.toneMappingExposure = runStage.env.exposure || 1.04;
+      this._setCameraMode(this.cameraMode, true);
+      this._prepareRun();
+      this.ui.setLoading(100, 'READY TO RUN');
+      return true;
+    } catch (err) {
+      this._disposeBuildBag(bag);
+      if (err && err.name === 'StageLoadCancelled') return false;
+      throw err;
     }
-    this.ui.setLoading(88, 'ROLLING OUT THE CAR');
-    await nextFrame();
+  }
 
-    this.carModel = createCarModel(car, { withInterior: true, menu: false });
-    this.carRoot = new THREE.Group();
-    this.carRoot.rotation.order = 'YXZ';
-    this.carRoot.add(this.carModel.group);
-    this.scene.add(this.carRoot);
-    this.carModel.group.traverse((o) => {
-      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
-    });
-    // wheels and fender flares sit outside the cockpit shell; hide them from the
-    // interior view so they cannot poke through the open footwell.
-    this.carModel.exteriorBits.forEach((o) => { o.visible = false; });
-
-    this.physics = new CarPhysics(car, this.track, {
-      onImpact: (strength) => {
-        this.shakeImpulse = Math.min(1.3, this.shakeImpulse + strength * 1.1);
-        this.audio.impact(strength);
-      },
-      onBreak: (collider, impact) => {
-        this.destruction?.breakObject(collider, impact, this.physics?.vel);
-        this.audio.impact(Math.min(1, 0.35 + impact / 24));
-        this.audio.shatter(Math.min(1.2, 0.45 + impact / 20));
-        this.shakeImpulse = Math.min(1.5, this.shakeImpulse + 0.22 + impact * 0.018);
-      },
-    });
-    this.cockpit = new Cockpit({ track: this.track, stage, car, settings: this.settings });
-    this.cockpit.attach(this.carModel);
-
-    this.weather = new WeatherFX(this.stage, quality, this.settings.weatherFx);
-    this.weather.onLightning = () => this._lightning();
-    this.scene.add(this.weather.group);
-
-    this.headlights = new Headlights(this.carRoot, car, this.stage.env);
-
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.025, 2800);
-    this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.set(0, Math.PI, 0);
-    this.headBase.copy(this.carModel.headRig.position);
-    this._setCameraMode(this.cameraMode, true);
-    this.cameraLook.set(0, 0, 0);
-
-    this.ui.setLoading(95, 'HEATING THE TYRES');
-    await nextFrame();
-    this._prepareRun();
-    this.ui.setLoading(100, 'READY TO RUN');
+  _disposeBuildBag(bag) {
+    if (!bag) return;
+    try { bag.destruction?.dispose(); } catch { /* keep cleaning */ }
+    try { bag.headlights?.dispose(); } catch { /* keep cleaning */ }
+    if (bag.scene) disposeObject(bag.scene);
+    for (const key of Object.keys(bag)) bag[key] = null;
   }
 
   _prepareRun() {
     this.physics.reset(this.track, true);
+    this._recoverCooldown = 0;
+    this._simTimeDropped = 0;
     this.bestTime = this.stage.endless ? null : getBest(this.stage.id, this.car.id);
     this.endlessBest = this.stage.endless ? getEndlessBest(this.baseStage.id, this.car.id) : null;
     this._endlessSaveTimer = 0;
@@ -459,6 +541,7 @@ export class Game {
     this.resultsShown = false;
     this.finishTimer = 0;
     this.physAcc = 0;
+    this._recoverCooldown = 0;
     this.input.reset();
     this.input.lookSens = this.settings.lookSensitivity;
     this.physics.reset(this.track, true);
@@ -479,6 +562,9 @@ export class Game {
     this.touch?.setVisible(false);
     this.touch?.requestLandscape();
     this._countdownTimer && clearTimeout(this._countdownTimer);
+    this._countdownTimer = null;
+    this._hintTimer && clearTimeout(this._hintTimer);
+    this._hintTimer = null;
     this.ui.showCountdown(3, this.stage);
     this.audio.init();
     this.audio.setEngine(true);
@@ -524,6 +610,10 @@ export class Game {
   }
 
   quitToMenu() {
+    // Invalidate any in-flight build before disposing the live stage. Any
+    // stale builder will finish into its private bag and discard itself.
+    this._loadGeneration++;
+    this._loadInFlight = false;
     this._saveEndlessRecord();
     this.ui.hidePause();
     this.ui.hideResults();
@@ -531,6 +621,7 @@ export class Game {
     this.touch?.setVisible(false);
     this._countdownTimer && clearTimeout(this._countdownTimer);
     this.ui.closeModals();
+    if (this.state === 'loading') this.ui.hideLoading();
     this.ui.showMenu();
     this.ui.setStartEnabled(true);
     this.ui.showGameHints(false);
@@ -579,6 +670,8 @@ export class Game {
 
   recoverCar() {
     if (this.state !== 'racing' || !this.physics) return;
+    if (this._recoverCooldown > 0) return;
+    this._recoverCooldown = 1.5;
     this.physics.resetToTrack(this.track);
     this.time += 3;
     this.physAcc = 0;
@@ -592,8 +685,9 @@ export class Game {
   /* ============================================================
      UPDATE
      ============================================================ */
-  update(dt) {
-    dt = Math.min(0.05, Math.max(0, dt));
+  update(dt, realDt = dt) {
+    dt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0));
+    realDt = Math.min(0.25, Math.max(0, Number.isFinite(realDt) ? realDt : dt));
     switch (this.state) {
       case 'menu':
         this.input.update(dt);
@@ -605,13 +699,13 @@ export class Game {
         this._updateCountdown(dt);
         break;
       case 'racing':
-        this._updateRacing(dt);
+        this._updateRacing(dt, realDt);
         break;
       case 'paused':
         this.renderScene();
         break;
       case 'finishing':
-        this._updateFinishing(dt);
+        this._updateFinishing(dt, realDt);
         break;
       case 'finished':
         this.renderScene();
@@ -619,6 +713,26 @@ export class Game {
       default:
         break;
     }
+  }
+
+  /** Fixed-step physics accumulator driven by real elapsed time. The race
+   *  clock advances by the time the simulation actually consumed, so score,
+   *  distance and motion stay consistent even when rendering stalls. */
+  _stepPhysics(realDt, inputState, maxSteps = MAX_PHYS_STEPS) {
+    if (!this.physics) return 0;
+    const budget = Math.min(Math.max(0, realDt), PHYS_CATCHUP_LIMIT);
+    this.physAcc = Math.min(this.physAcc + budget, PHYS_CATCHUP_LIMIT + PHYS_STEP);
+    let steps = 0;
+    while (this.physAcc >= PHYS_STEP && steps < maxSteps) {
+      this.physics.step(PHYS_STEP, inputState, this.track);
+      this.physAcc -= PHYS_STEP;
+      steps++;
+    }
+    if (this.physAcc >= PHYS_STEP) {
+      this._simTimeDropped += this.physAcc;
+      this.physAcc = 0;
+    }
+    return steps * PHYS_STEP;
   }
 
   _updateCountdown(dt) {
@@ -647,23 +761,16 @@ export class Game {
     if (this.countdownTime <= 0) this._go();
   }
 
-  _updateRacing(dt) {
-    this.time += dt;
+  _updateRacing(dt, realDt = dt) {
     if (this.countdownHide > 0) {
       this.countdownHide -= dt;
       if (this.countdownHide <= 0) this.ui.hideCountdown();
     }
     this.input.update(dt);
     this.input.lookSens = this.settings.lookSensitivity;
+    this._recoverCooldown = Math.max(0, this._recoverCooldown - dt);
 
-    this.physAcc += dt;
-    let steps = 0;
-    while (this.physAcc >= PHYS_STEP && steps < 12) {
-      this.physics.step(PHYS_STEP, this.input.state(), this.track);
-      this.physAcc -= PHYS_STEP;
-      steps++;
-    }
-    if (steps === 12) this.physAcc = 0;
+    this.time += this._stepPhysics(realDt, this.input.state());
     if (this.track.endless) {
       this.track.streamEndless(this.physics.pos);
       this._endlessSaveTimer += dt;
@@ -694,16 +801,11 @@ export class Game {
     }
   }
 
-  _updateFinishing(dt) {
+  _updateFinishing(dt, realDt = dt) {
     this.input.update(dt);
     const finishInput = { throttle: 0, brake: 0.45, handbrake: 0, steer: this.input.steerTarget * 0.35 };
-    this.physAcc += dt;
-    let steps = 0;
-    while (this.physAcc >= PHYS_STEP && steps < 10) {
-      this.physics.step(PHYS_STEP, finishInput, this.track);
-      this.physAcc -= PHYS_STEP;
-      steps++;
-    }
+    this._stepPhysics(realDt, finishInput);
+    this._recoverCooldown = Math.max(0, this._recoverCooldown - dt);
     this.radioTimer = Math.max(0, this.radioTimer - dt);
     this.finishTimer -= dt;
     this.shakeImpulse = Math.max(0, this.shakeImpulse - dt * 2.4);
@@ -1230,8 +1332,18 @@ export class Game {
     this.physics = null;
     this.cockpit = null;
     this.weather = null;
+    this.stage = null;
+    this.baseStage = null;
+    this.conditions = null;
+    this.stageMetrics = null;
+    this.car = null;
     this.physAcc = 0;
+    this._recoverCooldown = 0;
     this.resultsShown = false;
+    this._hintTimer && clearTimeout(this._hintTimer);
+    this._countdownTimer && clearTimeout(this._countdownTimer);
+    this._hintTimer = null;
+    this._countdownTimer = null;
     if (this.renderer) {
       this.renderer.renderLists.dispose();
     }
@@ -1264,6 +1376,23 @@ export class Game {
       colliders: this.track?.colliders?.length,
       terrainTiles: this.track?.terrainTiles?.size,
       sideRoads: this.track?.roadNetwork?.debug?.(),
+      loadGeneration: this._loadGeneration,
+      loading: this._loadInFlight,
+      physAcc: this.physAcc,
+      simTimeDropped: this._simTimeDropped,
+      recoverCooldown: this._recoverCooldown,
+      render: this.renderer ? {
+        calls: this.renderer.info.render.calls,
+        triangles: this.renderer.info.render.triangles,
+        geometries: this.renderer.info.memory.geometries,
+        textures: this.renderer.info.memory.textures,
+      } : null,
     };
+  }
+
+  startStageById(carId, stageId, endless = false) {
+    if (carId) this.ui.selectCar(carId);
+    if (stageId) this.ui.selectStage(stageId);
+    return this.startStage(this.ui.selectedCar, this.ui.selectedStage, !!endless);
   }
 }

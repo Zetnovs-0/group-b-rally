@@ -1568,50 +1568,104 @@ export function carDerived(car) {
   return { powerPct, weightPct, gripPct, agility };
 }
 
+const QUALITY_VALUES = ['low', 'medium', 'high'];
+const UNIT_VALUES = ['kph', 'mph'];
+const SHADER_VALUES = ['off', 'vivid', 'cinematic'];
+const WEATHER_IDS = new Set(WEATHER_MODES.map((m) => m.id));
+const TIME_IDS = new Set(TIME_MODES.map((m) => m.id));
+const CAMERA_IDS = new Set(CAMERA_MODES.map((m) => m.id));
+const MAX_STAGE_RECORD = 24 * 60 * 60; // 24 hours
+const MAX_ENDLESS_RECORD = 10_000_000; // metres
+
+function pickString(value, allowed, fallback) {
+  return typeof value === 'string' && allowed.includes(value) ? value : fallback;
+}
+
+function pickNumber(value, fallback, min, max) {
+  const n = typeof value === 'number' ? value : NaN;
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function pickBoolean(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+/** Never trust a localStorage payload: old versions, extensions and manual
+ *  edits can all leave malformed JSON or wrong types behind. */
+export function sanitizeSettings(raw) {
+  const d = DEFAULT_SETTINGS;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...d };
+  return {
+    quality: pickString(raw.quality, QUALITY_VALUES, d.quality),
+    volume: pickNumber(raw.volume, d.volume, 0, 1),
+    muted: pickBoolean(raw.muted, d.muted),
+    voice: pickBoolean(raw.voice, d.voice),
+    lookSensitivity: pickNumber(raw.lookSensitivity, d.lookSensitivity, 0.2, 2.5),
+    shake: pickBoolean(raw.shake, d.shake),
+    units: pickString(raw.units, UNIT_VALUES, d.units),
+    weatherFx: pickBoolean(raw.weatherFx, d.weatherFx),
+    showHints: pickBoolean(raw.showHints, d.showHints),
+    weather: raw.weather === 'auto' || WEATHER_IDS.has(raw.weather) ? raw.weather : d.weather,
+    timeOfDay: raw.timeOfDay === 'auto' || TIME_IDS.has(raw.timeOfDay) ? raw.timeOfDay : d.timeOfDay,
+    camera: CAMERA_IDS.has(raw.camera) ? raw.camera : d.camera,
+    headlights: pickBoolean(raw.headlights, d.headlights),
+    shaders: pickString(raw.shaders, SHADER_VALUES, d.shaders),
+  };
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return sanitizeSettings(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
 }
 
 export function saveSettings(settings) {
+  const clean = sanitizeSettings(settings);
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
   } catch { /* storage unavailable */ }
+  return clean;
+}
+
+function readRecord(key, maxValue) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return null;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0 || value > maxValue) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function writeRecord(key, value, maxValue, decimals) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0 || n > maxValue) return false;
+  try {
+    localStorage.setItem(key, String(n.toFixed(decimals)));
+  } catch { /* ignore quota / blocked storage */ }
+  return true;
 }
 
 export function getBest(stageId, carId) {
-  try {
-    const v = localStorage.getItem(BEST_PREFIX + stageId + '.' + carId);
-    return v ? parseFloat(v) : null;
-  } catch {
-    return null;
-  }
+  return readRecord(BEST_PREFIX + stageId + '.' + carId, MAX_STAGE_RECORD);
 }
 
 export function setBest(stageId, carId, time) {
-  try {
-    localStorage.setItem(BEST_PREFIX + stageId + '.' + carId, String(time.toFixed(2)));
-  } catch { /* ignore */ }
+  return writeRecord(BEST_PREFIX + stageId + '.' + carId, time, MAX_STAGE_RECORD, 2);
 }
 
 export function getEndlessBest(stageId, carId) {
-  try {
-    const v = localStorage.getItem(ENDLESS_PREFIX + stageId + '.' + carId);
-    return v ? parseFloat(v) : null;
-  } catch {
-    return null;
-  }
+  return readRecord(ENDLESS_PREFIX + stageId + '.' + carId, MAX_ENDLESS_RECORD);
 }
 
 export function setEndlessBest(stageId, carId, metres) {
-  try {
-    localStorage.setItem(ENDLESS_PREFIX + stageId + '.' + carId, String(metres.toFixed(1)));
-  } catch { /* ignore */ }
+  return writeRecord(ENDLESS_PREFIX + stageId + '.' + carId, metres, MAX_ENDLESS_RECORD, 1);
 }
 
 export function clearBests() {
