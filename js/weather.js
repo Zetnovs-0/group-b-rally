@@ -329,10 +329,12 @@ export class WeatherFX {
 
     if (carState && wheelPositions && carState.speedKph > 6) {
       const k = clamp(carState.speedKph / 130, 0, 1.2);
-      const off = carState.offRoad ? 1.8 : 1;
-      const dust = this.wetness < 0.3 && !this.rain && !this.snow;
+      const loose = carState.surfaceLoose ?? (carState.offRoad ? 0.9 : 0.25);
+      const off = carState.offRoad ? 1.8 : 0.7 + loose * 0.8;
+      const dust = this.wetness < 0.3 && !this.rain && !this.snow && loose > 0.45;
       this._sprayTimer += dt;
-      const interval = (dust ? 0.05 : carState.surface === 'snow' ? 0.035 : 0.06) / (0.5 + k);
+      const interval = (dust ? 0.045 : carState.surface === 'snow' ? 0.032 : 0.06) /
+        (0.5 + k);
       while (this._sprayTimer > interval) {
         this._sprayTimer -= interval;
         const w = wheelPositions[(Math.random() * wheelPositions.length) | 0];

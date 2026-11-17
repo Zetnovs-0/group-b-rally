@@ -412,7 +412,7 @@ export class Track {
       this.samples.push({
         i, pos: p.clone(), tangent, right, heading, dist,
         curvature: 0, curvatureSmooth: 0, grip: 1, hazard: null, hazardLabel: null,
-        surfaceName: this.env.surfaceName, grade: tangent.y,
+        surface: this.env.road, surfaceName: this.env.surfaceName, grade: tangent.y,
       });
     }
     this.n = this.samples.length;
@@ -524,6 +524,7 @@ export class Track {
       grip: 1,
       hazard: null,
       hazardLabel: null,
+      surface: this.env.road,
       surfaceName: this.env.surfaceName,
       grade: raw.grade,
     };
@@ -691,6 +692,7 @@ export class Track {
     for (let i = Math.max(0, fromIndex); i < this.n; i++) {
       const s = this.samples[i];
       s.grip = base * (s.hazard ? (s.hazardMul || 1) : 1);
+      s.surface = s.hazard || this.env.road;
       s.surfaceName = s.hazardLabel || this.env.surfaceName;
     }
   }
@@ -797,6 +799,7 @@ export class Track {
     const base = this.stage.baseGrip;
     for (const s of this.samples) {
       s.grip = base * (s.hazard ? (s.hazardMul || 1) : 1);
+      s.surface = s.hazard || this.env.road;
       if (s.hazardLabel) s.surfaceName = s.hazardLabel;
       else s.surfaceName = this.env.surfaceName;
     }
@@ -1134,12 +1137,21 @@ export class Track {
     const dist = lerp(aS.dist, bS.dist, t);
     const grip = lerp(aS.grip, bS.grip, t);
     const offRoad = absLat > this.halfWidth + 0.65;
-    const surfaceName = (t > 0.5 ? bS : aS).surfaceName;
-    const hazard = (t > 0.5 ? bS : aS).hazard;
-    const hazardLabel = (t > 0.5 ? bS : aS).hazardLabel;
+    const baseSample = t > 0.5 ? bS : aS;
+    let surface = baseSample.surface || this.stage.env.road;
+    let surfaceName = baseSample.surfaceName;
+    const hazard = baseSample.hazard;
+    const hazardLabel = baseSample.hazardLabel;
     if (!offRoad) this.lastIndexHint = nearIdx;
+
+    // Do not make the asphalt edge a vertical wall. The road ribbon sits a
+    // few centimetres above the terrain field, and sampling it with a hard
+    // on/off test used to fool the steep-face guard when crossing back from
+    // the verge. Blend the physics height across the shoulder instead.
+    const edgeLateral = Math.sign(lateral || 1) * this.halfWidth;
+    const edgeY = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset + this.roadCrown(edgeLateral);
     let height;
-    if (absLat <= this.halfWidth + 0.25) {
+    if (absLat <= this.halfWidth) {
       height = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset + this.roadCrown(lateral);
     } else {
       // Evaluate the terrain field on the interpolated route frame instead of
@@ -1151,31 +1163,43 @@ export class Track {
       scratch.dist = dist;
       const wx = center.x + right.x * lateral;
       const wz = center.z + right.z * lateral;
-      if (this.endless && Math.abs(lateral) > this.halfWidth + 2.5) {
-        height = this._smoothEndlessHeight(scratch, lateral) + 0.015;
+      let terrainY;
+      if (this.endless && absLat > this.halfWidth + 2.5) {
+        terrainY = this._smoothEndlessHeight(scratch, lateral) + 0.015;
       } else {
-        height = this._heightAtFrame(
+        terrainY = this._heightAtFrame(
           scratch, lateral, wx, wz, this._terrainNoise(wx, wz),
         ) + 0.015;
       }
+      // 1.1 m shoulder ramp: a car rejoining the road rides up the lip instead
+      // of hitting it as a 10-15 cm wall.
+      const shoulderT = smoothstep(this.halfWidth, this.halfWidth + 1.1, absLat);
+      height = lerp(edgeY, terrainY, shoulderT);
     }
     if (this.stage.biome === 'city') {
       // Kerbside parking and the raised pavement are real surfaces in the
       // city, not just visuals. Keep the car level with the kerb it is on.
-      const edgeY = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset +
+      const cityEdgeY = lerp(aS.pos.y, bS.pos.y, t) + this.roadYOffset +
         this.roadCrown(Math.sign(lateral || 1) * this.halfWidth);
       if (absLat > this.halfWidth + 0.18 && absLat <= this.halfWidth + 2.45) {
-        height = edgeY - 0.012;
+        height = cityEdgeY - 0.012;
+        surface = 'pavement';
+        surfaceName = 'PAVEMENT';
       } else if (absLat > this.halfWidth + 2.45 && absLat <= this.halfWidth + 5.15) {
-        height = edgeY + 0.145;
+        height = cityEdgeY + 0.145;
+        surface = 'pavement';
+        surfaceName = 'PAVEMENT';
       }
+    }
+    if (offRoad && !(this.stage.biome === 'city' && absLat <= this.halfWidth + 5.15)) {
+      surface = 'offroad';
     }
     return {
       index: nearIdx, nearIndex: nearIdx, t, center, tangent, right, lateral, absLat,
       dist, progress: clamp(dist / this.length, 0, 1), grip, offRoad, hazard, hazardLabel,
-      surfaceName, heading: Math.atan2(tangent.x, tangent.z),
+      surface, surfaceName, heading: Math.atan2(tangent.x, tangent.z),
       height,
-      sample: t > 0.5 ? bS : aS,
+      sample: baseSample,
     };
   }
 
@@ -1191,6 +1215,7 @@ export class Track {
     const side = this.roadNetwork ? this.roadNetwork.nearest(pos) : null;
     if (side && side.absLat <= side.road.halfWidth + 0.75 &&
         side.absLat + 0.4 < main.absLat) {
+      const shoulderT = smoothstep(side.road.halfWidth, side.road.halfWidth + 0.9, side.absLat);
       return {
         ...main,
         onSideRoad: true,
@@ -1200,8 +1225,9 @@ export class Track {
         right: side.right,
         lateral: side.lateral,
         absLat: side.absLat,
-        height: side.height,
+        height: lerp(side.height, main.height, shoulderT),
         grip: side.grip,
+        surface: side.surface || side.road.surface,
         surfaceName: side.surfaceName,
         offRoad: side.offRoad,
         heading: side.heading,

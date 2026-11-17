@@ -28,7 +28,7 @@ remaining verification.
 ## Verification performed
 
 - `npm run check` — all JS modules parse.
-- `npm test` — 8 unit tests pass.
+- `npm test` — 13 unit tests pass (settings/records + surface profiles).
 - Headless Chromium (`?debug=1`, SwiftShader):
   - menu render and debug API present on debug URL,
   - stage load and countdown,

@@ -14,7 +14,8 @@ group-b-rally/
 │   ├── ui.js                  Menu, car/stage cards, settings, pause, results, toasts
 │   ├── input.js               Keyboard, mouse-look, gamepad, touch state
 │   ├── touch.js               On-screen landscape controls
-│   ├── physics.js             Four-wheel vehicle dynamics and collisions
+│   ├── physics.js             Four-wheel vehicle dynamics, assisted/realistic models
+│   ├── surfaces.js            Surface profiles (grip, rolling, brake, bump, audio)
 │   ├── track.js               Spline/endless road, terrain, scenery, pacenotes, streaming
 │   ├── endlessRoute.js        Forward-progressing procedural route generator
 │   ├── roadNetwork.js         Branching side-road generation and junction meshes
@@ -72,6 +73,7 @@ main.js
     │   └── textures.js
     ├── carModel.js      procedural car and interior
     ├── physics.js       vehicle dynamics
+    ├── surfaces.js      surface profiles
     ├── cockpit.js       canvas instruments
     ├── weather.js       weather particles
     ├── effects.js       headlights/windscreen
@@ -148,7 +150,8 @@ generator) into a drivable world:
 |---|---|
 | `endlessRoute.js` | Produces one forward-progressing sample at a time with biome-specific corner/straight/grade statistics. Keeps a wandering heading envelope so the main road cannot self-cross. |
 | `roadNetwork.js` | Grows side roads from the endless main route: forks, rejoins, dead ends. Owns branch meshes, junction aprons and branch surface queries. |
-| `physics.js` | Four-wheel dynamics: driveline, torque curve, gearbox, steering, tyre slip, load transfer, terrain gradient, collisions, body attitude. |
+| `physics.js` | Four-wheel dynamics: driveline, torque curve, gearbox, steering, tyre slip, load transfer, terrain gradient, collisions, body attitude, and REALISTIC/ASSISTED tuning. |
+| `surfaces.js` | Shared surface profiles for asphalt, broken, gravel, loose, dirt, mud, snow, ice, water, roots, ruts, rocks, sand, fesh-fesh, pavement and off-stage. Drives physics grip/rolling/braking, body bump, dust and tyre audio. |
 | `carModel.js` | Builds procedural car exteriors/interiors, wheels, cockpits, decals and rigs. Merges static meshes per material for draw-call control. |
 | `cockpit.js` | Paints gauge, trip computer, map and pacenote displays into `CanvasTexture`s and animates needles/screens. |
 | `ui.js` | DOM-only menu, selection, settings, pause, results, help, toast and loading overlays. |

@@ -124,6 +124,7 @@ class SideRoad {
       distance: Math.sqrt(bestD),
       height: center.y + this.crown(lateral),
       grip: this.grip * (absLat > this.halfWidth + 0.6 ? 0.66 : 1),
+      surface: absLat > this.halfWidth + 0.6 ? 'offroad' : this.surface,
       surfaceName: absLat > this.halfWidth + 0.6 ? 'VERGE' : this.surfaceName,
       offRoad: absLat > this.halfWidth + 0.6,
       heading: Math.atan2(tangent.x, tangent.z),

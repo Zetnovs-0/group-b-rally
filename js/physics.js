@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clamp, damp } from './util.js';
+import { surfaceProfile } from './surfaces.js';
 
 const G = 9.81;
 const RHO = 1.225;
@@ -7,7 +8,7 @@ const WHEEL_RADIUS = 0.335;
 const DRIVE_EFFICIENCY = 0.9;
 // Longitudinal capacity is deliberately a little higher than the lateral
 // capacity: braking and traction should feel positive instead of greasy.
-const LONG_GRIP_GAIN = 2.05;
+// The per-model gain lives in MODEL_TUNING below.
 const BRAKE_ACCEL_G = 1.92;
 const MAX_DRIVE_GRADE = 0.58;   // above ~30 degrees, engine torque fades
 const MAX_CLIMB_GRADE = 0.72;   // above ~36 degrees the slope is a wall
@@ -18,6 +19,58 @@ const TORQUE_CURVE = [
   [1000, 0.42], [2000, 0.58], [3000, 0.74], [4000, 0.9],
   [5000, 1.0], [6000, 0.95], [7000, 0.84], [7900, 0.66],
 ];
+
+/* Two intentionally different driver models.
+   ASSISTED keeps the original forgiving grip floor and stronger electronic
+   stabilisation. REALISTIC uses a lower mechanical floor, a more progressive
+   tyre falloff, less artificial yaw damping and permissive traction/stability
+   so throttle and weight transfer can actually rotate the car. */
+const MODEL_TUNING = {
+  assisted: {
+    mechanicalFloor: 0.70,
+    wheelGripFloor: 0.45,
+    longGripGain: 2.05,
+    peakSlipScale: 1.00,
+    frontPeakSlip: 1.00,
+    rearPeakSlip: 1.00,
+    frontPostPeakFloor: 0.90,
+    rearPostPeakFloor: 0.90,
+    yawDamp: 0.42,
+    yawDampSpeed: 0.0060,
+    slideYawDamp: 0.85,
+    stabilityScale: 1.00,
+    tractionTrim: 0.72,
+    loadTransferScale: 1.00,
+    steerRateScale: 1.00,
+    lowSpeedDamp: 7.0,
+    rearGripBias: 1.00,
+    powerOversteer: 0.00,
+    handbrakeGripLoss: 0.80,
+    looseDrag: 0.45,
+  },
+  realistic: {
+    mechanicalFloor: 0.28,
+    wheelGripFloor: 0.22,
+    longGripGain: 1.92,
+    peakSlipScale: 1.16,
+    frontPeakSlip: 1.00,
+    rearPeakSlip: 0.94,
+    frontPostPeakFloor: 0.86,
+    rearPostPeakFloor: 0.78,
+    yawDamp: 0.26,
+    yawDampSpeed: 0.0032,
+    slideYawDamp: 0.30,
+    stabilityScale: 0.30,
+    tractionTrim: 0.90,
+    loadTransferScale: 1.14,
+    steerRateScale: 0.95,
+    lowSpeedDamp: 5.0,
+    rearGripBias: 0.95,
+    powerOversteer: 0.14,
+    handbrakeGripLoss: 0.90,
+    looseDrag: 1.40,
+  },
+};
 
 function surfaceDistanceSign(v) {
   return v < 0 ? -1 : 1;
@@ -62,6 +115,8 @@ export class CarPhysics {
     this.reverseTimer = 0;
     this.reverse = false;
     this.info = null;
+    this.drivingModel = 'realistic';
+    this.tuning = MODEL_TUNING.realistic;
     this.shiftTimer = 0;
     this.odometer = 0;
     this.finished = false;
@@ -76,11 +131,15 @@ export class CarPhysics {
     this.terrainGrade = 0;
     this.terrainSideGrade = 0;
     this.onSlopeWall = false;
+    this.surfaceKey = 'gravel';
+    this.surfaceBump = 1;
+    this.surfaceLoose = 0.65;
 
     // Per-wheel state. The order matches carModel.wheels:
     // front-left(+x), front-right(-x), rear-left(+x), rear-right(-x).
     this.wheelGround = new Float32Array(4);
     this.wheelGrip = new Float32Array(4);
+    this.wheelSurface = new Array(4).fill('gravel');
     this.wheelLoad = new Float32Array(4);
     this.wheelTravel = new Float32Array(4);
     this.wheelAngle = new Float32Array(4);
@@ -94,8 +153,14 @@ export class CarPhysics {
     this._wheelPos = new THREE.Vector3();
     this._probePos = new THREE.Vector3();
 
+    this.setDrivingModel(opts.model);
     this._initVehicle();
     this.reset(track, true);
+  }
+
+  setDrivingModel(model) {
+    this.drivingModel = MODEL_TUNING[model] ? model : 'realistic';
+    this.tuning = MODEL_TUNING[this.drivingModel];
   }
 
   /* Physical dimensions and drivetrain parameters. Kept here rather than in the
@@ -226,25 +291,22 @@ export class CarPhysics {
   }
 
   _rollingCoefficient(info, offRoad) {
-    const name = String(info.surfaceName || '').toUpperCase();
-    let c = 0.022;
-    if (name.includes('SNOW') || name.includes('ICE')) c = 0.03;
-    else if (name.includes('MUD')) c = 0.055;
-    else if (name.includes('SAND') || name.includes('DIRT')) c = 0.048;
-    else if (name.includes('GRAVEL')) c = 0.034;
-    else if (name.includes('BROKEN')) c = 0.026;
-    else if (name.includes('ASPHALT') || name.includes('TARMAC')) c = 0.018;
-    if (offRoad) c *= 1.55;
-    return c;
+    const profile = surfaceProfile(info?.surface || info?.surfaceName);
+    return profile.rolling * (offRoad ? 1.35 : 1);
   }
 
   /* Slip curve: rises steeply for the first few degrees, peaks, then falls
      away gently. The old linear rise made small steering inputs feel dead. */
-  _tireLateral(alpha, maxForce, peakSlip) {
+  _tireLateral(alpha, maxForce, peakSlip, floor) {
     const mag = Math.abs(alpha);
     if (mag < 1e-5) return 0;
     const x = mag / peakSlip;
-    const shape = x <= 1 ? x * (2 - x) : 0.9 + 0.1 * Math.exp(-(x - 1) * 0.9);
+    // Past the peak the tyre keeps losing lateral force. The assisted model
+    // keeps the old gentle plateau; realistic uses a grippier front and a
+    // rear that keeps sliding, which is what makes a drift steerable.
+    const shape = x <= 1
+      ? x * (2 - x)
+      : floor + (1 - floor) * Math.exp(-(x - 1) * 0.9);
     return -Math.sign(alpha) * maxForce * shape;
   }
 
@@ -344,7 +406,11 @@ export class CarPhysics {
 
     // ---- surface ----
     const offRoad = !!info.offRoad;
-    const surfaceGrip = Math.max(0.12, info.grip * (offRoad ? 0.82 : 1));
+    const surface = surfaceProfile(info.surface || info.surfaceName);
+    this.surfaceKey = surface.key;
+    this.surfaceBump = surface.bump;
+    this.surfaceLoose = surface.loose;
+    const surfaceGrip = Math.max(0.08, info.grip * surface.grip);
     const topSpeed = this.car.topSpeed / 3.6;
     const speedAbs = Math.abs(this.forwardSpeed);
     const weightRatio = this.car.weight / 950;
@@ -361,7 +427,7 @@ export class CarPhysics {
     const targetSteer = steerTarget * steerLock;
     const steerRate = Math.max(2.2,
       ((h.steerRate ?? 7.2) - Math.min(2.4, speedAbs * 0.035)) /
-      Math.pow(weightRatio, 0.04));
+      Math.pow(weightRatio, 0.04) * this.tuning.steerRateScale);
     const returnRate = Math.abs(steerTarget) < 0.02
       ? (h.returnRate ?? steerRate * 1.5)
       : steerRate;
@@ -376,21 +442,20 @@ export class CarPhysics {
     const u0 = this.forwardSpeed;
     const v0 = this.vLat;
     const r0 = this.yawRate;
-    let latGrip = Math.max(0.1, this.car.grip * surfaceGrip * 1.10);
-    // A small mechanical grip floor stops the car feeling like it is on ice
-    // even when the surface is loose.
-    latGrip = Math.max(latGrip, 0.70);
-    const longGrip = latGrip * LONG_GRIP_GAIN;
+    let latGrip = Math.max(0.08, this.car.grip * surfaceGrip * 1.10);
+    latGrip = Math.max(latGrip, this.tuning.mechanicalFloor);
+    const longGrip = latGrip * this.tuning.longGripGain * surface.longGrip;
     const downforce = 0.5 * RHO * this.liftCdA * u0 * u0;
     this.downforce = downforce;
 
     const staticFront = this.mass * G * this.frontWeight + downforce * this.frontWeight;
     const staticRear = this.mass * G * (1 - this.frontWeight) + downforce * (1 - this.frontWeight);
-    const transfer = this.loadTransfer;
+    const transfer = this.loadTransfer * this.tuning.loadTransferScale;
     const FzFront = Math.max(this.mass * G * 0.03, staticFront - transfer);
     const FzRear = Math.max(this.mass * G * 0.03, staticRear + transfer);
     const latTransfer = clamp(
-      this.mass * this.latAccel * this.cgHeight / Math.max(0.5, this.trackWidth),
+      this.mass * this.latAccel * this.cgHeight / Math.max(0.5, this.trackWidth) *
+        this.tuning.loadTransferScale,
       -this.mass * G * 0.30, this.mass * G * 0.30,
     );
 
@@ -407,7 +472,7 @@ export class CarPhysics {
       if (brake > 0.01) driveForce = -brake * this.mass * G * 0.42;
       if (throttle > 0.01 && this.forwardSpeed < -0.15) {
         brakeMag = throttle * this.mass * G * BRAKE_ACCEL_G * this.car.brake *
-          this.brakeAssist * moving;
+          this.brakeAssist * moving * surface.brake;
       }
     } else {
       if (!shifting && throttle > 0.01) {
@@ -424,7 +489,7 @@ export class CarPhysics {
       }
       if (this.forwardSpeed > 0.15 || this.forwardSpeed < -0.15) {
         brakeMag = brake * this.mass * G * BRAKE_ACCEL_G * this.car.brake *
-          this.brakeAssist * moving;
+          this.brakeAssist * moving * surface.brake;
       }
     }
 
@@ -452,7 +517,9 @@ export class CarPhysics {
       this.wheelInfo[i] = wi;
       const h = wi.height;
       this.wheelGround[i] = h;
-      this.wheelGrip[i] = Math.max(0.12, wi.grip * (wi.offRoad ? 0.82 : 1));
+      const wheelProfile = surfaceProfile(wi.surface || wi.surfaceName);
+      this.wheelSurface[i] = wheelProfile.key;
+      this.wheelGrip[i] = Math.max(0.08, wi.grip * wheelProfile.grip);
       if (w.front) frontH += h * 0.5;
       else rearH += h * 0.5;
       if (w.x >= 0) leftH += h * 0.5;
@@ -489,7 +556,8 @@ export class CarPhysics {
     engineBrakeForce *= powerScale;
 
     const steerAngles = this._frontWheelAngles(this.steer);
-    const peakSlip = this.peakSlip ?? (0.105 + (1 - surfaceGrip) * 0.045);
+    const basePeakSlip = (this.peakSlip ?? (0.105 + (1 - surfaceGrip) * 0.045)) *
+      this.tuning.peakSlipScale;
     let FxBody = 0;
     let FzBody = 0;
     let yawMoment = 0;
@@ -500,10 +568,12 @@ export class CarPhysics {
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i];
       const load = this.wheelLoad[i];
+      const wheelProfile = surfaceProfile(this.wheelSurface[i]);
       // Grip is per contact patch: one wheel on the verge does not get the
       // same grip as the three still on the carriageway.
-      const wheelLatGrip = Math.max(0.45, this.car.grip * this.wheelGrip[i] * 1.10);
-      const wheelLongGrip = wheelLatGrip * LONG_GRIP_GAIN;
+      const wheelLatGrip = Math.max(this.tuning.wheelGripFloor,
+        this.car.grip * this.wheelGrip[i] * 1.10);
+      const wheelLongGrip = wheelLatGrip * this.tuning.longGripGain * wheelProfile.longGrip;
       const cap = Math.max(1, wheelLongGrip * load * 0.985);
       const axleDriveShare = w.front ? driveFrontShare : (1 - driveFrontShare);
       const wheelDrive = driveForce * axleDriveShare * 0.5;
@@ -527,13 +597,24 @@ export class CarPhysics {
       // trim the combined-slip term and keep the wheel rolling.
       let fxiLat = fxi;
       if (this.abs && wheelBrake + wheelHand > 1) fxiLat = Math.min(fxiLat, 0.80);
-      if (this.traction && wheelDrive > 1) fxiLat = Math.min(fxiLat, speedAbs < 3 ? 0.88 : 0.72);
+      if (this.traction && wheelDrive > 1) {
+        fxiLat = Math.min(fxiLat, speedAbs < 3 ? 0.92 : this.tuning.tractionTrim);
+      }
 
-      let latCap = wheelLatGrip * (w.front ? 0.99 : 1.04) * load *
+      let latCap = wheelLatGrip * (w.front ? 0.99 : 1.04 * this.tuning.rearGripBias) * load *
         Math.sqrt(1 - fxiLat * fxiLat);
       // A tyre cannot hold a car on a very steep side-slope. Let it slide.
       latCap *= clamp(1 - Math.max(0, Math.abs(sideGrade) - 0.38) * 1.15, 0.42, 1);
-      if (!w.front) latCap *= 1 - 0.8 * handbrake;
+      if (!w.front) {
+        // Throttle eats rear lateral capacity. This is already implicit in the
+        // friction circle, but the extra term makes power-oversteer usable
+        // instead of instantly self-correcting in the realistic model.
+        if (wheelDrive > 0 && this.tuning.powerOversteer > 0) {
+          const driveUse = clamp(wheelDrive / Math.max(1, load * G * 0.60), 0, 1);
+          latCap *= 1 - this.tuning.powerOversteer * driveUse * clamp(speedAbs / 10, 0, 1);
+        }
+        latCap *= 1 - this.tuning.handbrakeGripLoss * handbrake;
+      }
 
       const vLongBody = u0 - r0 * w.x;
       const vLatBody = v0 + r0 * w.z;
@@ -544,9 +625,13 @@ export class CarPhysics {
       const vLatWheel = vLatBody * cosD - vLongBody * sinD;
       const slipDen = Math.max(Math.abs(vLong), 1.2);
       const alpha = clamp(Math.atan2(vLatWheel, slipDen), -1.35, 1.35);
+      const wheelPeakSlip = basePeakSlip * (w.front
+        ? this.tuning.frontPeakSlip : this.tuning.rearPeakSlip);
+      const peakFloor = w.front
+        ? this.tuning.frontPostPeakFloor : this.tuning.rearPostPeakFloor;
       const forceScale = clamp(Math.hypot(vLong, vLatWheel) / 1.4, 0, 1);
-      const Fy = this._tireLateral(alpha, latCap, peakSlip) * forceScale;
-      this.wheelSlip[i] = Math.abs(alpha) / peakSlip;
+      const Fy = this._tireLateral(alpha, latCap, wheelPeakSlip, peakFloor) * forceScale;
+      this.wheelSlip[i] = Math.abs(alpha) / wheelPeakSlip;
       this.wheelLock[i] = this.abs ? 0 : clamp((fxDemand - 0.94) / 0.3, 0, 1);
       this.wheelSpin[i] = (!this.traction && wheelDrive > 0)
         ? clamp((fxDemand - 0.94) / 0.3, 0, 1) : 0;
@@ -582,38 +667,45 @@ export class CarPhysics {
     const drag = -0.5 * RHO * this.dragCdA * u0 * Math.abs(u0);
     const uphillLoss = grade > 0.5 ? G * (grade - 0.5) * 1.35 : 0;
     const downhillGain = grade < -0.5 ? G * (-grade - 0.5) * 0.25 : 0;
+    // Spinning wheels on loose ground dig in instead of accelerating freely.
+    const looseSpinDrag = this.wheelspin * surface.loose * this.tuning.looseDrag *
+      clamp(speedAbs / 8, 0.15, 1);
 
     let uDot = FzBody / this.mass + r0 * v0 + rolling / this.mass +
-      drag / this.mass - G * grade - uphillLoss + downhillGain;
+      drag / this.mass - G * grade - uphillLoss + downhillGain - looseSpinDrag;
     let vDot = FxBody / this.mass - r0 * u0 - G * sideGrade;
     let rDot = yawMoment / this.inertia;
 
-    // Tyre relaxation and aero damping. The per-wheel forces already provide
-    // most of the self-centring, so this is much lighter than before.
-    rDot -= r0 * (0.42 + 0.006 * speedAbs + 0.85 * clamp(rearSlipLoad - 0.85, 0, 1.2));
+    // Tyre relaxation and aero damping. The assisted model uses a strong
+    // self-centring term; realistic lets the yaw rate live so a slide can be
+    // held with steering and throttle instead of instantly snapping straight.
+    const rearSlipDamp = clamp(rearSlipLoad - 0.85, 0, 1.2);
+    rDot -= r0 * (this.tuning.yawDamp + this.tuning.yawDampSpeed * speedAbs +
+      this.tuning.slideYawDamp * rearSlipDamp);
 
     // Electronic stability control: nudge the yaw rate toward the kinematic
     // target and bleed off residual sideways velocity. It only intervenes
     // when the car is actually sliding, so normal cornering stays natural.
     const speedFactor = clamp(speedAbs / 6, 0, 1);
-    const stabilityActive = this.stability > 0.01 && handbrake < 0.2;
+    const stability = this.stability * this.tuning.stabilityScale;
+    const stabilityActive = stability > 0.01 && handbrake < 0.2;
     if (stabilityActive) {
       const maxLat = Math.max(0.8, this.car.grip * surfaceGrip) * G * 1.15;
       const maxYaw = maxLat / Math.max(4, speedAbs);
       const targetYaw = clamp(u0 * Math.tan(this.steer) / this.wheelbase, -maxYaw, maxYaw);
-      rDot += (targetYaw - r0) * this.stability * (3.8 + 3.2 * speedFactor);
-      rDot -= r0 * this.stability * 0.55;
+      rDot += (targetYaw - r0) * stability * (3.8 + 3.2 * speedFactor);
+      rDot -= r0 * stability * 0.55;
     }
 
     let u1 = u0 + uDot * dt;
     let v1 = v0 + vDot * dt;
     let r1 = r0 + rDot * dt;
-    if (stabilityActive) v1 *= Math.exp(-this.stability * (1.2 + 1.8 * speedFactor) * dt);
+    if (stabilityActive) v1 *= Math.exp(-stability * (1.2 + 1.8 * speedFactor) * dt);
 
     // Low-speed settling keeps the car from jittering when stationary.
     if (speedAbs < 0.35 && throttle < 0.02 && brake < 0.02) {
-      v1 *= Math.exp(-7 * dt);
-      r1 *= Math.exp(-7 * dt);
+      v1 *= Math.exp(-this.tuning.lowSpeedDamp * dt);
+      r1 *= Math.exp(-this.tuning.lowSpeedDamp * dt);
     }
     if (Math.abs(u1) < 0.04 && throttle < 0.02 && brake < 0.02) u1 = 0;
     if (u1 > topSpeed * 1.02) u1 = topSpeed * 1.02;
@@ -651,7 +743,9 @@ export class CarPhysics {
       // turn a gentle road crest into a fake vertical wall.
       const slopeDist = Math.max(stepDist, 0.05);
       const faceSlope = rise / slopeDist;
-      if (faceSlope > MAX_CLIMB_GRADE && speedAbs > 0.4) {
+      // Ignore kerbs, road lips and small terrain steps. Only a genuine
+      // near-vertical face should stop the car.
+      if (faceSlope > MAX_CLIMB_GRADE && rise > 0.20 && speedAbs > 0.4) {
         this.pos.x = oldX;
         this.pos.z = oldZ;
         this.vel.set(0, 0, 0);

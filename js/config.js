@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS = {
   camera: 'cockpit',
   headlights: true,
   shaders: 'off',
+  drivingModel: 'realistic',
 };
 
 /* ---------- Cars ---------- */
@@ -1082,6 +1083,11 @@ export const CAMERA_MODES = [
   { id: 'bumper', label: 'BUMPER', fov: 84 },
 ];
 
+export const DRIVING_MODES = [
+  { id: 'realistic', label: 'REALISTIC' },
+  { id: 'assisted', label: 'ASSISTED' },
+];
+
 const TIME_PRESETS = {
   day: {
     sunIntensity: 1, hemiIntensity: 1, exposure: 1, fogMul: 1,
@@ -1574,6 +1580,7 @@ const SHADER_VALUES = ['off', 'vivid', 'cinematic'];
 const WEATHER_IDS = new Set(WEATHER_MODES.map((m) => m.id));
 const TIME_IDS = new Set(TIME_MODES.map((m) => m.id));
 const CAMERA_IDS = new Set(CAMERA_MODES.map((m) => m.id));
+const DRIVING_IDS = new Set(DRIVING_MODES.map((m) => m.id));
 const MAX_STAGE_RECORD = 24 * 60 * 60; // 24 hours
 const MAX_ENDLESS_RECORD = 10_000_000; // metres
 
@@ -1610,6 +1617,7 @@ export function sanitizeSettings(raw) {
     camera: CAMERA_IDS.has(raw.camera) ? raw.camera : d.camera,
     headlights: pickBoolean(raw.headlights, d.headlights),
     shaders: pickString(raw.shaders, SHADER_VALUES, d.shaders),
+    drivingModel: DRIVING_IDS.has(raw.drivingModel) ? raw.drivingModel : d.drivingModel,
   };
 }
 

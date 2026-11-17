@@ -1,7 +1,7 @@
 import {
   CARS, STAGES, getCar, getStage, loadSettings, saveSettings, getBest, clearBests,
-  carDerived, BIOME_LABEL, WEATHER_MODES, TIME_MODES, CAMERA_MODES, resolveConditions,
-  getEndlessBest,
+  carDerived, BIOME_LABEL, WEATHER_MODES, TIME_MODES, CAMERA_MODES, DRIVING_MODES,
+  resolveConditions, getEndlessBest,
 } from './config.js';
 import { getStageMetrics } from './track.js';
 import { formatTime, formatDelta } from './util.js';
@@ -92,8 +92,10 @@ export class UI {
       soundBtn: $('#btn-sound'),
       menuWeather: $('#menu-weather'),
       menuTime: $('#menu-time'),
+      menuPhysics: $('#menu-physics'),
       setWeather: $('#set-weather-mode'),
       setTime: $('#set-time-mode'),
+      setPhysics: $('#set-physics'),
       setCamera: $('#set-camera'),
       conditionLine: $('#condition-line'),
     };
@@ -806,11 +808,15 @@ export class UI {
     const weather = opts(WEATHER_MODES);
     const time = opts(TIME_MODES);
     const camera = opts(CAMERA_MODES);
+    const driving = opts(DRIVING_MODES);
     for (const el of [this.dom.menuWeather, this.dom.setWeather]) {
       if (el) el.innerHTML = weather;
     }
     for (const el of [this.dom.menuTime, this.dom.setTime]) {
       if (el) el.innerHTML = time;
+    }
+    for (const el of [this.dom.menuPhysics, this.dom.setPhysics]) {
+      if (el) el.innerHTML = driving;
     }
     if (this.dom.setCamera) this.dom.setCamera.innerHTML = camera;
   }
@@ -822,6 +828,9 @@ export class UI {
     }
     for (const el of [this.dom.menuTime, this.dom.setTime]) {
       if (el && el.value !== s.timeOfDay) el.value = s.timeOfDay;
+    }
+    for (const el of [this.dom.menuPhysics, this.dom.setPhysics]) {
+      if (el && el.value !== s.drivingModel) el.value = s.drivingModel;
     }
     if (this.dom.setCamera && this.dom.setCamera.value !== s.camera) this.dom.setCamera.value = s.camera;
     this._updateConditionLine();
@@ -835,8 +844,9 @@ export class UI {
     if (!el) return;
     const weather = WEATHER_MODES.find((m) => m.id === this.settings.weather)?.label || 'AUTO';
     const time = TIME_MODES.find((m) => m.id === this.settings.timeOfDay)?.label || 'AUTO';
-    const label = weather === 'AUTO' && time === 'AUTO' ? 'STAGE DEFAULT' : `${weather} · ${time}`;
-    el.textContent = label;
+    const driving = DRIVING_MODES.find((m) => m.id === this.settings.drivingModel)?.label || 'REALISTIC';
+    const conditions = weather === 'AUTO' && time === 'AUTO' ? 'STAGE DEFAULT' : `${weather} · ${time}`;
+    el.textContent = `${conditions} · ${driving}`;
     el.classList.toggle('auto', weather === 'AUTO' && time === 'AUTO');
   }
 
@@ -927,8 +937,10 @@ export class UI {
     };
     bindCond(this.dom.menuWeather, 'weather');
     bindCond(this.dom.menuTime, 'timeOfDay');
+    bindCond(this.dom.menuPhysics, 'drivingModel');
     bindCond(this.dom.setWeather, 'weather');
     bindCond(this.dom.setTime, 'timeOfDay');
+    bindCond(this.dom.setPhysics, 'drivingModel');
     bindCond(this.dom.setCamera, 'camera');
     $('#btn-clear-records').addEventListener('click', () => {
       this._click();

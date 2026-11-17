@@ -117,7 +117,7 @@ virtual state shows revs without moving the car.
 `WeatherFX` builds quality-scaled particle systems:
 
 - rain/snow points with wind and car-relative motion,
-- wheel spray and off-road dust,
+- wheel spray and off-road dust; dust amount uses the current surface profile's `loose` value (asphalt stays dry, gravel/dirt/sand generate dust),
 - fog banks,
 - fireflies at night,
 - lightning timer/callback.
@@ -151,8 +151,8 @@ The game defaults to `off` for performance and battery life.
 
 `js/ui.js` owns all DOM overlays in `index.html`:
 
-- main menu with car list, stage cards, biome art, condition pickers, best time
-  and start button,
+- main menu with car list, stage cards, biome art, time/weather/driving-model
+  pickers, best time and start button,
 - loading screen with progress and tips,
 - countdown,
 - pause modal,
@@ -180,7 +180,7 @@ disconnect release all inputs, so no pedal can stay held after an alt-tab.
 - Master gain → compressor → destination; gain follows settings volume/mute.
 - Engine: saw/square/sine oscillators through a low-pass, with per-car
   cylinder count, rasp, turbo response and boost.
-- Surface/tyre noise, wind, turbo whistle and crackle layers.
+- Surface/tyre noise, wind, turbo whistle and crackle layers. Tyre noise uses `js/surfaces.js` (`audioTone`/`audioGain`), so asphalt, gravel, mud, snow and ice sound different, not just quieter/louder.
 - Impacts and shatters use filtered noise/envelopes.
 - Thunder, UI beeps and click.
 - `speechSynthesis` speaks co-driver pacenotes and countdown messages.

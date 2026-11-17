@@ -34,6 +34,10 @@ recorded in `package.json` `engines`; CI uses Node 20.
 - invalid/negative/Infinity/absurd record values,
 - `clearBests()` prefix safety.
 
+`tests/surfaces.test.js` covers surface-key/name resolution, aliases, required
+profile fields, and the deliberately different grip/rolling values for
+asphalt, gravel, mud and ice.
+
 Syntax checking covers all modules, including those that import Three.js
 (`node --check` parses but does not resolve imports).
 
@@ -70,6 +74,7 @@ Useful `debugState()` fields:
   state, time, speedKph, progress, car, stage, endless,
   chunks, terrainTiles, colliders, sideRoads,
   loadGeneration, loading,
+  surface, surfaceBump, drivingModel,
   physAcc, simTimeDropped, recoverCooldown,
   render: { calls, triangles, geometries, textures }
 }

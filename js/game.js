@@ -4,6 +4,7 @@ import {
   getEndlessBest, setEndlessBest,
 } from './config.js';
 import { clamp, damp, nextFrame, disposeObject } from './util.js';
+import { surfaceProfile } from './surfaces.js';
 import { UI } from './ui.js';
 import { MenuPreview } from './menuPreview.js';
 import { Input } from './input.js';
@@ -202,6 +203,7 @@ export class Game {
       this.cockpit.settings = this.settings;
       this.cockpit.speedUnit = this.settings.units === 'mph' ? 'MPH' : 'KM/H';
     }
+    if (this.physics) this.physics.setDrivingModel(this.settings.drivingModel);
     if (!this.settings.shake) this.shakeImpulse = 0;
     this._applyPostFX();
   }
@@ -261,9 +263,14 @@ export class Game {
   }
 
   _onSettingsChanged(settings) {
+    const previousModel = this.settings.drivingModel;
     this.settings = settings;
     this._applySettings(false);
     if (!settings.voice && this.audio) this.audio.hushVoice();
+    if (previousModel !== settings.drivingModel && this.state === 'racing') {
+      const label = settings.drivingModel === 'realistic' ? 'REALISTIC' : 'ASSISTED';
+      this.ui.toast(`DRIVING MODEL · ${label}`, 1400);
+    }
   }
 
   toggleMute() {
@@ -437,6 +444,7 @@ export class Game {
       bag.carModel.exteriorBits.forEach((o) => { o.visible = false; });
 
       bag.physics = new CarPhysics(car, track, {
+        model: this.settings.drivingModel,
         onImpact: (strength) => {
           this.shakeImpulse = Math.min(1.3, this.shakeImpulse + strength * 1.1);
           this.audio.impact(strength);
@@ -842,11 +850,12 @@ export class Game {
     const p = this.physics;
     const speed = p.speedKph;
     const rough = p.info && p.info.offRoad ? 1 : 0;
+    const surfaceBump = p.surfaceBump || 1;
     const comfort = this.car?.handling?.comfort || 0;
     const bump = this.settings.shake
       ? (Math.sin(p.odometer * 6.1) * 0.0045 * clamp(speed / 90, 0, 1) +
-        Math.sin(p.odometer * 13.7) * 0.0015 * clamp(speed / 140, 0, 1) * (1 + rough * 2)) *
-        (1 - comfort * 0.62)
+        Math.sin(p.odometer * 13.7) * 0.0015 * clamp(speed / 140, 0, 1) * (1 + rough * 1.25)) *
+        (1 - comfort * 0.62) * surfaceBump
       : 0;
     this.carRoot.position.set(p.pos.x, p.pos.y + bump, p.pos.z);
     this.carRoot.rotation.order = 'YXZ';
@@ -941,10 +950,11 @@ export class Game {
     if (!this.settings.shake) return { amp: 0, t: 0 };
     const p = this.physics;
     const rough = p?.info?.offRoad ? 1.8 : 0;
+    const surfaceBump = p?.surfaceBump || 1;
     const factor = mode === 'cockpit' ? 1 : mode === 'bonnet' ? 1.25 : mode === 'bumper' ? 1.4 : 0.75;
     const comfort = this.car?.handling?.comfort || 0;
     const amp = (0.0011 + speedRatio * 0.0022 + rough * 0.0045 + this.shakeImpulse * 0.017) *
-      factor * (1 - comfort * 0.58);
+      factor * (1 - comfort * 0.58) * surfaceBump;
     return { amp, t: performance.now() / 1000 };
   }
 
@@ -1118,10 +1128,12 @@ export class Game {
       this.carRoot.localToWorld(this.tmpWheels[1]);
     }
     const p = this.physics;
+    const surface = surfaceProfile(p?.info?.surface || this.stage.env.road);
     this.weather.update(dt, this.tmpVec, p ? {
       speedKph: p.speedKph,
       offRoad: p.info?.offRoad,
-      surface: this.stage.env.road,
+      surface: surface.key,
+      surfaceLoose: surface.loose,
     } : null, this.tmpWheels, this.stage.env.stars || 0);
     if (this.weather.flash > 0) this.track.setFlash(Math.max(this.track.flash, this.weather.flash));
 
@@ -1233,8 +1245,7 @@ export class Game {
       };
     }
     const info = p?.info;
-    let surface = this.stage.env.road;
-    if (info?.hazard === 'ice') surface = 'ice';
+    const surface = info?.surface || this.stage.env.road;
     return {
       rpm: p?.rpm || 900,
       throttle: p?.throttle || 0,
@@ -1381,6 +1392,9 @@ export class Game {
       physAcc: this.physAcc,
       simTimeDropped: this._simTimeDropped,
       recoverCooldown: this._recoverCooldown,
+      surface: this.physics?.surfaceKey,
+      surfaceBump: this.physics?.surfaceBump,
+      drivingModel: this.settings?.drivingModel,
       render: this.renderer ? {
         calls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,

@@ -41,6 +41,7 @@ Rules:
 | `timeOfDay` | `auto` or a known `TIME_MODES` id |
 | `camera` | known `CAMERA_MODES` id |
 | `shaders` | `off`, `vivid`, `cinematic` |
+| `drivingModel` | `realistic`, `assisted` |
 
 Malformed JSON, `null`, arrays, primitives, wrong types and out-of-range values
 fall back to `DEFAULT_SETTINGS`. The sanitizer reads only known properties, so

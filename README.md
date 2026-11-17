@@ -134,17 +134,18 @@ Every stage can be run in any combination of conditions. Both are selectable fro
 - **Auto** keeps each stage's authored default look; pick dawn, dusk or night for a different mood.
 
 ### Driving model
+- **DRIVING model selector** in the main menu (and Settings): **REALISTIC** is the default simulation-focused model with progressive breakaway, less artificial yaw damping, a grippier front axle and a rear axle that can be rotated with throttle, weight transfer or the handbrake. **ASSISTED** keeps the original forgiving grip floor and stronger electronic stabilisation for casual driving. The setting applies instantly and is saved.
 - Four-wheel vehicle dynamics: every tyre has its own ground contact, suspension travel, normal load, longitudinal demand, spin/lock state and lateral slip force. The old bicycle model is gone; the body is balanced by the four contact patches.
 - Steering has a speed-sensitive lock, a real rack rate, Ackermann front-wheel angles and self-centring return. The car asks for a slip angle rather than snapping to a yaw rate, and the tyre curve now builds force much earlier in the slip range, so small inputs actually bite.
 - Longitudinal load transfer under acceleration and braking changes each wheel's grip. Lateral load transfer is modelled per side with a stability floor. Brake balance follows the dynamic front/rear load, so threshold braking is strong but the rear stays settled; locking the brakes costs steering and leaves lock-up marks.
-- The terrain under all four wheels is sampled independently. Front/rear height differences and left/right height differences feed real gravity along the slope and across it, and the body pitch/roll is fitted to the contact plane instead of the road tangent. A car on a steep side-slope slides; a wall steeper than the climb limit blocks the car instead of letting it drive up a vertical face.
+- The terrain under all four wheels is sampled independently. Front/rear height differences and left/right height differences feed real gravity along the slope and across it, and the body pitch/roll is fitted to the contact plane instead of the road tangent. A car on a steep side-slope slides; a wall steeper than the climb limit blocks the car instead of letting it drive up a vertical face. The asphalt edge is blended across a 1.1 m shoulder ramp, so rejoining the road no longer hits an invisible step or blocks the car at the lip.
 - A torque-curve engine, multi-speed automatic gearbox, clutch-cut shifts, engine braking, turbo spool and aero drag make acceleration and coasting speed-dependent. Wheels can spin or lock and the combined-slip tyre model reduces cornering grip when you use the tyres for braking or traction.
 - Weight, centre-of-mass position and drivetrain layout affect the balance: AWD launch and neutrality, RWD throttle-oversteer, FWD understeer.
 - Each car has its own grip figure, brake coefficient and tyre package.
 - Modern city cars add a second, convenience-focused setup on top of the same four-wheel model: quick power steering with extra low-speed lock, strong assisted brakes, ABS, traction control and electronic stability control. The stability system trims yaw and sideways slide only when the car is actually slipping, so normal cornering stays natural. Handbrake input still overrides it.
-- City cars are heavy and deliberately calm: they brake from 100 km/h in roughly 15-16 m in the game's units, stay flat under load and resist spinning with a full steering input at motorway speed. Rally cars keep their original analogue, oversteer-friendly behaviour.
+- City cars are heavy and deliberately calm: in ASSISTED mode they brake from 100 km/h in roughly 15-16 m in the game's units, stay flat under load and resist spinning with a full steering input at motorway speed. REALISTIC mode reduces their stability intervention and lets the rear axle move under load. Rally cars keep their analogue, oversteer-friendly behaviour.
 - Modern interiors are built as a separate cockpit specification: soft-touch dashboard, twin digital displays, ambient trim, leather seats, a flat-bottom wheel and a passenger instead of a helmeted rally co-driver. The dashboard map, trip computer and pacenote screen work exactly as before.
-- Surface grip changes by biome and by hazard patches: loose gravel, mud, water, roots, black ice, deep snow, wet tarmac, moss, sand and fesh-fesh. Rolling resistance and engine braking change with the surface too.
+- Surface grip changes by biome, side-road surface and hazard patch: asphalt, broken asphalt, gravel, loose gravel, dirt, mud, water, roots, black ice, deep snow, wet tarmac, moss/leaves, ruts, rocks, sand, fesh-fesh, pavement and off-stage. A shared surface model changes lateral grip, longitudinal capacity, rolling drag, braking authority, body bump, dust/spray, tyre audio and off-road drag, so tarmac, gravel, mud and ice do not feel like the same road with a different colour.
 - Handbrake locks the rear axle, cuts rear lateral grip and rotates the car while scrubbing speed.
 - Turbo boost builds with lag; engine/induction/turbo audio follows the revs.
 - The stage surface, ruts, snow banks, roadside markers, trees, boulders, city kerbs and buildings all affect the visual and physical route.
@@ -186,7 +187,7 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Recovery (`R`) returns the car to the nearest point on the road with a +3 second penalty and a 1.5 second cooldown.
 
 ### Settings
-Graphics quality (high/medium/low), vivid shaders (off by default), weather, time of day, default camera, master volume, co-driver voice, weather effects, camera shake, look sensitivity, km/h or mph units, and clear-records. Quality affects draw distance/tree density, shadow quality and pixel ratio. While driving, a conservative dynamic-resolution controller can lower the internal pixel ratio (never the object geometry or draw distance) if the frame rate stays below target, and restores it once there is headroom.
+Graphics quality (high/medium/low), vivid shaders (off by default), weather, time of day, driving model (REALISTIC/ASSISTED), default camera, master volume, co-driver voice, weather effects, camera shake, look sensitivity, km/h or mph units, and clear-records. Quality affects draw distance/tree density, shadow quality and pixel ratio. While driving, a conservative dynamic-resolution controller can lower the internal pixel ratio (never the object geometry or draw distance) if the frame rate stays below target, and restores it once there is headroom.
 
 ### Performance
 - Endless scenery is pooled into global per-material instanced batches instead of one InstancedMesh per tree type per tile. The same trees, geometry and materials are drawn, but vegetation draw calls fall by an order of magnitude.
@@ -229,7 +230,8 @@ js/endlessRoute.js    procedural one-sample-at-a-time main route generator
 js/roadNetwork.js     branching side-road generation, meshes and surface queries
 js/destruction.js     debris bursts and breakable-object fragments
 js/carModel.js        procedural cars, liveries, cockpit, co-driver, dash screens
-js/physics.js         driving model and surface/collision handling
+js/physics.js         four-wheel driving model, tuning modes, surface/collision handling
+js/surfaces.js        surface profiles: grip, rolling, braking, bump, dust and audio
 js/cockpit.js         CanvasTexture dash/map/pacenote renderers and animations
 js/audio.js           procedural WebAudio engine/turbo/surface/impact + speech
 js/weather.js         precipitation, spray, dust, fog banks, fireflies, lightning

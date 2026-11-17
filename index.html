@@ -73,7 +73,8 @@
         <div class="conditions">
           <label class="cond"><span>TIME</span><select id="menu-time" aria-label="Time of day"></select></label>
           <label class="cond"><span>WEATHER</span><select id="menu-weather" aria-label="Weather"></select></label>
-          <div class="cond-info"><span>CONDITIONS</span><b id="condition-line">STAGE DEFAULT</b></div>
+          <label class="cond"><span>DRIVING</span><select id="menu-physics" aria-label="Driving model"></select></label>
+          <div class="cond-info"><span>CONDITIONS</span><b id="condition-line">STAGE DEFAULT · REALISTIC</b></div>
         </div>
         <button class="start-btn" id="btn-start">
           <span class="start-stripes"></span>
@@ -203,6 +204,10 @@
           <select id="set-camera"></select>
         </div>
         <div class="setting-row">
+          <div class="setting-label"><span>DRIVING MODEL</span><small>Realistic simulation or assisted grip</small></div>
+          <select id="set-physics"></select>
+        </div>
+        <div class="setting-row">
           <div class="setting-label"><span>WEATHER FX</span><small>Snowfall & rain</small></div>
           <label class="switch"><input type="checkbox" id="set-weather" checked><i></i></label>
         </div>
@@ -224,7 +229,7 @@
         </div>
       </div>
       <div class="modal-actions">
-        <span class="modal-note">Vivid shaders apply instantly. Graphics, weather and time of day apply on the next stage start.</span>
+        <span class="modal-note">Vivid shaders and driving model apply instantly. Graphics, weather and time of day apply on the next stage start.</span>
         <button class="btn primary" id="btn-settings-done">DONE</button>
       </div>
     </div>

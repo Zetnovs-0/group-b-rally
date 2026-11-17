@@ -40,6 +40,13 @@ The road is a ribbon: five lateral lanes from `-halfWidth` to `+halfWidth`,
 with a small parabolic crown. Shoulders and verges are separate geometry.
 The road surface sits `0.055 m` above the sample height.
 
+`Track.nearest()` blends the physics height from the road edge to the terrain
+over a **1.1 m shoulder ramp** (`smoothstep(halfWidth, halfWidth + 1.1, |lateral|)`).
+The road ribbon is a few centimetres above the terrain field; without this
+blend, the steep-face guard could read the edge as a vertical wall and stop a
+car rejoining from the verge. The guard also ignores rises below 0.20 m, so
+kerbs, road lips and small terrain steps do not become walls.
+
 ## Terrain height
 
 `Track.heightAtSample(index, lateral)` is the core terrain function. It combines:
@@ -69,7 +76,8 @@ surface info used every physics step:
 
 ## Surfaces and grip
 
-Each sample starts at `stage.baseGrip`. Hazard patches multiply it:
+Each sample starts at `stage.baseGrip` and carries a short `surface` key.
+Hazard patches multiply the base grip and change the key:
 
 | Biome | Hazard examples | Grip multipliers |
 |---|---|---|
@@ -81,8 +89,12 @@ Each sample starts at `stage.baseGrip`. Hazard patches multiply it:
 | safari | sand, fesh-fesh, rocks | 0.66, 0.52, 0.70 |
 | city | standing water, wet leaves, roadworks | 0.72, 0.78, 0.74 |
 
-Off-road queries apply another `0.82` factor in physics. `surfaceName` is used
-for rolling resistance and audio/visual surface selection.
+Off-road queries switch the key to `offroad`. Physics then applies the shared
+`js/surfaces.js` profile: grip multiplier, longitudinal capacity, rolling drag,
+braking authority, body bump and loose-surface drag. The same key selects tyre
+audio and dust/spray. Consequently asphalt, gravel, mud, snow and ice differ in
+more than just their base grip number. See
+[04-vehicle-physics.md](04-vehicle-physics.md) for the full table.
 
 ## Pacenotes
 

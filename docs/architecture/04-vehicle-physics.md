@@ -7,6 +7,38 @@ load transfer, ground slope and collisions are resolved at four contact
 patches. This gives most of the feel of a rally car with a small, stable
 simulation footprint.
 
+## Driving models — REALISTIC vs ASSISTED
+
+The **DRIVING** selector in the main menu (also in Settings) chooses one of two
+tunings of the same physics. It is saved in settings and applied live.
+
+| | REALISTIC (default) | ASSISTED |
+|---|---|---|
+| Mechanical lateral grip floor | `0.28` | `0.70` |
+| Per-wheel grip floor | `0.22` | `0.45` |
+| Longitudinal grip gain | `1.92` | `2.05` |
+| Peak-slip scale | `1.16` | `1.00` |
+| Front / rear peak-slip multiplier | `1.00 / 0.94` | `1.00 / 1.00` |
+| Front / rear post-peak force floor | `0.86 / 0.78` | `0.90 / 0.90` |
+| Rear lateral bias | `0.95` | `1.00` |
+| Power-oversteer term | `0.14` | `0` |
+| Handbrake rear-grip loss | `0.90` | `0.80` |
+| Yaw damping (base + speed + slide) | low | high |
+| Stability-control scale | `0.30` | `1.00` |
+| Traction-control trim | `0.90` | `0.72` |
+| Load-transfer scale | `1.14` | `1.00` |
+| Loose-surface wheelspin drag | `1.40` | `0.45` |
+
+REALISTIC is not “less grip everywhere”: asphalt remains high-grip, but the
+front axle keeps more steering bite after the peak while the rear can step out
+and stay out. It also reduces the artificial yaw self-centring and stability
+intervention, so throttle, weight transfer and the handbrake can rotate the
+car. ASSISTED keeps the original forgiving floor and stronger stabilisation.
+
+`CarPhysics.setDrivingModel(model)` swaps the tuning table without rebuilding
+the car. `Game._applySettings()` calls it immediately when the menu selection
+changes; new stages pass `model` into the `CarPhysics` constructor.
+
 ## Car data model
 
 Each entry in `CARS` provides:
@@ -123,8 +155,12 @@ For each wheel:
   latCap = wheelLatGrip * load * sqrt(1 - fxUsage²)
   ```
 
-- the lateral force uses a slip curve: rises, peaks, then gently falls. Peak
-  slip is about `0.105 + (1 - surfaceGrip) * 0.045` unless a car overrides it.
+- the lateral force uses a slip curve: rises, peaks, then falls. Peak slip is
+  about `0.105 + (1 - surfaceGrip) * 0.045` unless a car overrides it, multiplied
+  by the model scale and the front/rear peak multiplier.
+- after the peak, REALISTIC drops front force to 86% and rear force to 78% of
+  the peak; ASSISTED holds both at 90%. The lower rear floor is what lets a
+  slide be held instead of instantly snapping back.
 - front wheels use their steer angle to project tyre force into the body frame.
 
 `ABS` and traction control are optional assists. ABS trims the combined-slip
@@ -201,28 +237,55 @@ the physics step and enters `finishing`. Endless runs have no finish.
 
 ## Surfaces and grip model
 
-Surface grip is multiplicative:
+Surface behaviour is centralized in `js/surfaces.js`. Track grip is still the
+base value (biome + hazard); the profile adds the second layer of feel:
 
 ```text
-car.grip * track sample grip * (offRoad ? 0.82 : 1) * 1.10
+asphalt:  grip 1.04, long 1.06, rolling 0.018, brake 1.05, bump 0.28
+gravel:   grip 0.90, long 0.88, rolling 0.038, brake 0.90, bump 1.05
+mud:      grip 0.72, long 0.62, rolling 0.068, brake 0.74, bump 0.95
+snow:     grip 0.78, long 0.70, rolling 0.032, brake 0.78, bump 0.55
+ice:      grip 0.48, long 0.32, rolling 0.012, brake 0.45, bump 0.15
+offroad:  grip 0.70, long 0.64, rolling 0.082, brake 0.78, bump 1.50
 ```
 
-A mechanical floor of `0.70` for lateral grip prevents the car feeling like
-ice on loose surfaces. Longitudinal grip is `2.05×` lateral grip, deliberately
-higher so braking and traction feel positive. Rolling resistance varies by
-surface name:
+The full set also covers `broken`, `loose`, `dirt`, `water`, `wet`, `moss`,
+`ruts`, `roots`, `rocks`, `sand`, `fesh`, `pavement`. Each profile supplies:
 
-| Surface | Coefficient |
-|---|---|
-| asphalt/tarmac | 0.018 |
-| snow/ice | 0.030 |
-| gravel | 0.034 |
-| sand/dirt | 0.048 |
-| mud | 0.055 |
-| off-road | ×1.55 |
+- **grip** — multiplies the track sample grip; the mechanical floor is
+  model-dependent.
+- **longGrip** — multiplies longitudinal capacity (traction/braking limit).
+- **rolling** — rolling-resistance coefficient.
+- **brake** — brake-force multiplier.
+- **bump** — body/camera shake and visual roughness.
+- **loose** — wheelspin drag, dust/spray amount.
+- **audioTone / audioGain** — tyre noise character.
 
-Hazard patches lower grip further in `Track` (ice, mud, water, fesh-fesh,
-etc.). The physics step never reads `localStorage` or the DOM.
+Effective lateral grip on an authored stage is roughly:
+
+```text
+car.grip * sample.grip * profile.grip * 1.10
+```
+
+so asphalt ≈ `0.96 × 1.04`, gravel ≈ `0.82 × 0.90`, mud ≈ `0.68 × 0.72`,
+snow ≈ `0.58 × 0.78`, ice ≈ `0.244 × 0.48`. The differences are deliberately
+large enough to change braking points, cornering balance and acceleration,
+not just colour. Rolling resistance varies from `0.018` on asphalt to `0.068`
+on mud and `0.09` in water/fesh.
+
+Off-road is its own profile (`offroad`), not a blanket multiplier. A wheel can
+be on a different surface from the other three: each wheel queries
+`track.driveAt()` separately, stores its profile key and uses its own grip and
+longitudinal capacity.
+
+### Road edge / terrain rejoin
+
+`Track.nearest()` blends the physics height from the road edge to the terrain
+over a **1.1 m shoulder ramp**. Without it, the road ribbon (roughly 10–15 cm
+above the terrain field) read as a vertical face to the steep-face guard when
+a car tried to rejoin from the verge. The steep-face constraint also ignores
+rises below **0.20 m**, so kerbs, road lips and small terrain steps are not
+treated as walls while genuine cliffs still stop the car.
 
 ## Rotation, grip and assists by car
 

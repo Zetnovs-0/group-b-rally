@@ -37,6 +37,7 @@ test('settings are type- and range-validated', () => {
     quality: 'ultra', volume: 99, muted: 'yes', voice: 1, lookSensitivity: -3,
     units: 'furlongs', weatherFx: 'true', showHints: null, weather: 'lava',
     timeOfDay: 42, camera: '<script>', headlights: 'on', shaders: 'disco',
+    drivingModel: 'arcade',
   }));
   const s = loadSettings();
   assert.equal(s.quality, DEFAULT_SETTINGS.quality);
@@ -52,6 +53,7 @@ test('settings are type- and range-validated', () => {
   assert.equal(s.camera, DEFAULT_SETTINGS.camera);
   assert.equal(s.headlights, DEFAULT_SETTINGS.headlights);
   assert.equal(s.shaders, DEFAULT_SETTINGS.shaders);
+  assert.equal(s.drivingModel, DEFAULT_SETTINGS.drivingModel);
 });
 
 test('valid settings are preserved and saveSettings sanitizes', () => {
@@ -59,8 +61,10 @@ test('valid settings are preserved and saveSettings sanitizes', () => {
   const saved = saveSettings({
     ...DEFAULT_SETTINGS, quality: 'low', camera: 'chase', weather: 'snow',
     timeOfDay: 'night', shaders: 'vivid', units: 'mph', volume: 2,
+    drivingModel: 'assisted',
   });
   assert.equal(saved.volume, 1);
+  assert.equal(saved.drivingModel, 'assisted');
   assert.deepEqual(loadSettings(), saved);
   assert.equal(JSON.parse(localStorage.getItem(STORAGE_KEY)).quality, 'low');
 });
