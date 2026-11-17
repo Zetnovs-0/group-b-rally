@@ -11,10 +11,37 @@ ES modules need an HTTP server, so opening `index.html` directly will not work.
 ```bash
 ./run.sh
 # or
-python3 -m http.server 8080
+npm start
 ```
 
-Then open <http://localhost:8080/>. The game is desktop-first and supports keyboard or gamepad.
+Then open <http://localhost:8080/>. The server binds to `127.0.0.1` by
+default. For explicit trusted-LAN debugging use `HOST=0.0.0.0 ./run.sh` or
+`npm run serve:lan`; the Python stdlib server is a development tool, not a
+production web server. The game is desktop-first and supports keyboard or
+gamepad.
+
+## Development
+
+```bash
+npm run check    # syntax-check every JS module
+npm test         # Node built-in unit tests
+npm run lint     # alias for check
+```
+
+For automation and profiling, append `?debug=1`. That exposes the frozen
+`window.__RALLY` API (`start`, `state`, `pause`, `resume`, `quit`, `camera`)
+and `window.__GAME`; normal URLs expose neither.
+
+## Documentation
+
+- [`docs/architecture/`](docs/architecture/) — project structure, runtime,
+  procedural world, physics, rendering/audio, security/deployment and testing.
+- [`SECURITY.md`](SECURITY.md) — reporting and hardening summary.
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — vendored Three.js
+  provenance and update procedure.
+- [`group_b_rally_QA_security_audit.md`](group_b_rally_QA_security_audit.md) —
+  original audit; the fix map is
+  [`docs/architecture/08-audit-fix-map.md`](docs/architecture/08-audit-fix-map.md).
 
 ## The game
 
@@ -156,7 +183,7 @@ The stack is self-contained (`js/postfx.js`): a linear scene target, bright-pass
 - Personal bests are stored per stage and car in `localStorage`.
 - ENDLESS runs store your furthest distance per stage and car instead of a stage time.
 - Results show stage time, personal best, delta, a rank (S/A/B/C), and a "new stage record" flag.
-- Recovery (`R`) returns the car to the road with a +3 second penalty.
+- Recovery (`R`) returns the car to the nearest point on the road with a +3 second penalty and a 1.5 second cooldown.
 
 ### Settings
 Graphics quality (high/medium/low), vivid shaders (off by default), weather, time of day, default camera, master volume, co-driver voice, weather effects, camera shake, look sensitivity, km/h or mph units, and clear-records. Quality affects draw distance/tree density, shadow quality and pixel ratio. While driving, a conservative dynamic-resolution controller can lower the internal pixel ratio (never the object geometry or draw distance) if the frame rate stays below target, and restores it once there is headroom.
@@ -215,17 +242,21 @@ js/input.js           keyboard, mouse-look, gamepad
 js/textures.js        procedural textures/liveries, bark, canopy, leaf and road surfaces
 js/postfx.js          optional vivid/cinematic bloom and colour-grading shaders
 js/util.js            math, noise, canvas, geometry helpers
-vendor/three.module.js local Three.js build
+vendor/three.module.js local Three.js build (r160, pinned SHA-256)
 assets/fonts/         local Barlow / Barlow Condensed / Share Tech Mono
-docs/                 screenshots
+tests/                Node unit tests for config/storage validation
+docs/                 screenshots + docs/architecture notes
+.github/workflows/    syntax + unit-test CI
+_headers              safe static-host headers (CSP rollout in the docs)
 ```
 
 ## Notes & credits
 
-- Three.js r160 (MIT) is vendored locally; see the header in `vendor/three.module.js`.
+- Three.js r160 (MIT) is vendored locally; version, size and SHA-256 are in `THIRD_PARTY_NOTICES.md` and `vendor/README.md`.
 - Barlow, Barlow Condensed and Share Tech Mono are licensed under the SIL Open Font License and vendored under `assets/fonts/`.
 - All other visuals, textures, geometry, tracks, car models and audio are generated procedurally in the browser. Trees, bark, leaf canopies, ground surfaces and road markings are all canvas-generated at load time.
 - Save data lives in the browser's `localStorage` under the `gbr.*` keys.
 - Built and tested with Chromium/WebGL2. `run.sh` will try to open your default browser automatically.
+- See `docs/architecture/` for the full architecture and mechanism notes.
 
 ![Snow cockpit](docs/cockpit-snow.png)
